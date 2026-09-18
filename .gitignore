@@ -1,0 +1,37 @@
+# Fichiers générés par les IDEs
+.idea/
+.vscode/
+
+# Fichiers divers
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+
+# Dossiers et fichiers générés par Flutter et Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+build/
+
+# Fichiers spécifiques à iOS
+ios/Pods/
+ios/Flutter/App.framework
+ios/Flutter/Flutter.framework
+ios/Flutter/ephemeral/
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+
+# Fichiers spécifiques à Android
+android/.gradle/
+android/app/src/main/assets/flutter_assets/
+android/build/
+
+# Fichiers spécifiques à Windows
+windows/flutter/ephemeral/
+windows/flutter/generated_plugin_registrant.cc
+windows/flutter/generated_plugin_registrant.h
+windows/build/

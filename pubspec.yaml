@@ -1,0 +1,51 @@
+name: reem_front
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # API Laravel
+  http: ^1.2.0
+  http_parser: ^4.0.0
+
+  # State management
+  provider: ^6.1.1
+
+  # Auth
+  google_sign_in: ^6.1.0
+
+  # 📁 Sélection de fichiers (IMPORTANT pour Windows)
+  file_picker: ^10.3.3
+
+  # � Vidéo / lecture
+  video_player: ^2.11.1
+
+  # 🎬 Trimmer vidéo (si tu l'utilises vraiment)
+  video_trimmer: ^5.0.0
+
+  # 🎥 Camera (optionnel Android)
+  camera: ^0.12.0+1
+
+  # Media player (optionnel mais OK)
+  media_kit: ^1.2.6
+  media_kit_video: ^2.0.1
+  media_kit_libs_video: ^1.0.7
+
+  # 🎞️ FFmpeg pour le traitement vidéo
+  ffmpeg_kit_flutter: ^6.0.3
+
+  # UI
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
