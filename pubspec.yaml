@@ -38,9 +38,6 @@ dependencies:
   media_kit_video: ^2.0.1
   media_kit_libs_video: ^1.0.7
 
-  # 🎞️ FFmpeg pour le traitement vidéo
-  ffmpeg_kit_flutter: ^6.0.3
-
   # UI
   cupertino_icons: ^1.0.8
 
