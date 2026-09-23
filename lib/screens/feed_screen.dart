@@ -450,8 +450,13 @@ class _FeedScreenState extends State<FeedScreen> {
           final video = shuffledVideos[index];
           final String rawPath = video['video_path'] ?? '';
           final String cleanPath = rawPath.replaceAll('\\', '/');
-          final String fullVideoUrl = "http://127.0.0.1:8000$cleanPath";
 
+          final String serverBaseUrl =
+              AuthService.baseUrl.replaceFirst(RegExp(r'/api$'), '');
+
+          final String fullVideoUrl = cleanPath.startsWith('http')
+              ? cleanPath
+              : '$serverBaseUrl${cleanPath.startsWith('/') ? '' : '/'}$cleanPath';
           final videoModel = app_models.Video(
             id: video['id'],
             videoUrl: fullVideoUrl,
@@ -801,12 +806,19 @@ class _FeedScreenState extends State<FeedScreen> {
             final video = items[index];
             final String rawPath = video['video_path'] ?? '';
             final String cleanPath = rawPath.replaceAll('\\', '/');
+
             final String thumbnailPath = video['thumbnail_path'] ?? '';
+
+            final String serverBaseUrl =
+                AuthService.baseUrl.replaceFirst(RegExp(r'/api$'), '');
+
             final String thumbnailUrl = thumbnailPath.startsWith('http')
                 ? thumbnailPath
-                : "http://127.0.0.1:8000${thumbnailPath.startsWith('/') ? '' : '/'}$thumbnailPath";
-            final String fullVideoUrl = "http://127.0.0.1:8000$cleanPath";
+                : '$serverBaseUrl${thumbnailPath.startsWith('/') ? '' : '/'}$thumbnailPath';
 
+            final String fullVideoUrl = cleanPath.startsWith('http')
+                ? cleanPath
+                : '$serverBaseUrl${cleanPath.startsWith('/') ? '' : '/'}$cleanPath';
             return ListTile(
               contentPadding: EdgeInsets.zero,
               leading: Container(
