@@ -29,9 +29,12 @@ dependencies:
 
   # 🎬 Trimmer vidéo (si tu l'utilises vraiment)
   video_trimmer: ^5.0.0
+  ffmpeg_kit_flutter_new_min: ^3.6.8
+  path_provider: ^2.1.5
 
   # 🎥 Camera (optionnel Android)
   camera: ^0.12.0+1
+  camera_windows: ^0.2.6+5
 
   # Media player (optionnel mais OK)
   media_kit: ^1.2.6
@@ -40,6 +43,7 @@ dependencies:
 
   # UI
   cupertino_icons: ^1.0.8
+  share_plus: ^12.0.1
 
 dev_dependencies:
   flutter_lints: ^6.0.0

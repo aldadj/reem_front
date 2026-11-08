@@ -1,8 +1,11 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../models/video.dart' as app_models;
 import '../services/session_manager.dart';
 import '../services/auth_service.dart';
+import '../widgets/video_player_item.dart';
+import '../widgets/video_thumbnail.dart';
 
 class ChatScreen extends StatefulWidget {
   final int? conversationId;
@@ -127,6 +130,63 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _isSending = false);
   }
 
+  Widget _buildMessageContent(String body) {
+    const marker = 'REEM_VIDEO:';
+    if (!body.startsWith(marker)) {
+      return Text(body, style: const TextStyle(color: Colors.white));
+    }
+
+    try {
+      final shared = jsonDecode(body.substring(marker.length)) as Map<String, dynamic>;
+      final videoUrl = shared['video_url']?.toString() ?? '';
+      final video = app_models.Video(
+        id: shared['id'] as int,
+        videoUrl: videoUrl,
+        title: shared['title']?.toString() ?? 'Vidéo partagée',
+        description: shared['description']?.toString(),
+        username: shared['username']?.toString() ?? 'Utilisateur',
+        authorId: shared['author_id'] as int? ?? 0,
+        likesCount: shared['likes_count'] as int? ?? 0,
+        commentsCount: shared['comments_count'] as int? ?? 0,
+        isLiked: false,
+        isFavorited: false,
+      );
+
+      return InkWell(
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => VideoPlayerItem(
+              video: video,
+              feedVisible: ValueNotifier<bool>(true),
+            ),
+          ),
+        ),
+        borderRadius: BorderRadius.circular(12),
+        child: SizedBox(
+          width: 220,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  height: 190,
+                  child: VideoThumbnail(thumbnailUrl: '', videoUrl: videoUrl),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(video.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+              Text('Vidéo de @${video.username} · Appuyer pour regarder', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            ],
+          ),
+        ),
+      );
+    } catch (_) {
+      return const Text('Vidéo partagée', style: TextStyle(color: Colors.white));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -159,10 +219,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 color: fromMe ? Colors.blueAccent : Colors.white12,
                                 borderRadius: BorderRadius.circular(16),
                               ),
-                              child: Text(
-                                message['body'] ?? '',
-                                style: const TextStyle(color: Colors.white),
-                              ),
+                              child: _buildMessageContent(message['body'] ?? ''),
                             ),
                           );
                         },

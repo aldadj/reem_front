@@ -25,6 +25,10 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>reem_front</string>
+	<key>NSCameraUsageDescription</key>
+	<string>La caméra permet d’enregistrer des vidéos à publier sur Reem.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Le microphone permet d’enregistrer le son de vos vidéos.</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

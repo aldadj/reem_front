@@ -1,9 +1,13 @@
+import 'dart:io';
+
 import 'package:camera/camera.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'publish_launcher.dart';
+import '../services/video_edit_service.dart';
 
 class UploadScreen extends StatefulWidget {
   const UploadScreen({super.key});
@@ -19,13 +23,16 @@ class _UploadScreenState
 
   bool _isInitializing = true;
   bool _isRecording = false;
+  bool _isProcessingPhotos = false;
+  final VideoEditService _videoEditService = VideoEditService();
 
-  bool get _isMobile {
+  bool get _supportsCamera {
     return !kIsWeb &&
         (defaultTargetPlatform ==
                 TargetPlatform.android ||
             defaultTargetPlatform ==
-                TargetPlatform.iOS);
+                TargetPlatform.iOS ||
+            defaultTargetPlatform == TargetPlatform.windows);
   }
 
   @override
@@ -43,7 +50,7 @@ class _UploadScreenState
 
   Future<void> _initializeCamera() async {
     try {
-      if (!_isMobile) {
+      if (!_supportsCamera) {
         if (!mounted) return;
 
         setState(() {
@@ -227,6 +234,79 @@ class _UploadScreenState
     }
   }
 
+  Future<void> _showMediaPicker() async {
+    final selection = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: const Color(0xFF1A1A1A),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.video_library_outlined, color: Colors.white),
+              title: const Text('Importer une vidéo', style: TextStyle(color: Colors.white)),
+              onTap: () => Navigator.pop(context, 'video'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined, color: Colors.white),
+              title: const Text('Créer une vidéo avec des photos', style: TextStyle(color: Colors.white)),
+              onTap: () => Navigator.pop(context, 'photos'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+    if (selection == 'video') await _pickVideo();
+    if (selection == 'photos') await _pickPhotos();
+  }
+
+  Future<void> _pickPhotos() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: true,
+        withData: true,
+      );
+      if (!mounted || result == null) return;
+      if (result.files.length > 12) {
+        _showMessage('Sélectionnez au maximum 12 photos.');
+        return;
+      }
+
+      setState(() => _isProcessingPhotos = true);
+      final tempDirectory = await getTemporaryDirectory();
+      final imagePaths = <String>[];
+
+      for (var index = 0; index < result.files.length; index++) {
+        final file = result.files[index];
+        var path = file.path;
+        if (path == null || !File(path).existsSync()) {
+          final bytes = file.bytes;
+          if (bytes == null || bytes.isEmpty) continue;
+          final extension = file.extension ?? 'jpg';
+          path = '${tempDirectory.path}${Platform.pathSeparator}'
+              'reem_photo_${DateTime.now().microsecondsSinceEpoch}_$index.$extension';
+          await File(path).writeAsBytes(bytes, flush: true);
+        }
+        imagePaths.add(path);
+      }
+
+      if (imagePaths.isEmpty) {
+        throw Exception('Aucune photo n’a pu être lue.');
+      }
+
+      final slideshowPath = await _videoEditService.createSlideshow(imagePaths);
+      if (!mounted) return;
+      openPublishScreen(context: context, videoPath: slideshowPath);
+    } catch (e) {
+      if (mounted) _showMessage('Impossible de créer la vidéo : $e');
+    } finally {
+      if (mounted) setState(() => _isProcessingPhotos = false);
+    }
+  }
+
   void _showMessage(String message) {
     if (!mounted) return;
 
@@ -275,6 +355,23 @@ class _UploadScreenState
               child: _buildMainContent(),
             ),
 
+            if (_isProcessingPhotos)
+              const Positioned.fill(
+                child: ColoredBox(
+                  color: Colors.black54,
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(color: Colors.white),
+                        SizedBox(height: 16),
+                        Text('Création de la vidéo…', style: TextStyle(color: Colors.white)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
             // =========================
             // BARRE DU HAUT
             // =========================
@@ -322,7 +419,7 @@ class _UploadScreenState
               left: 20,
               child:
                   GestureDetector(
-                onTap: _pickVideo,
+                onTap: _showMediaPicker,
                 child:
                     Container(
                   width: 62,
@@ -359,7 +456,7 @@ class _UploadScreenState
             // BOUTON CAMÉRA
             // =========================
 
-            if (!kIsWeb)
+            if (_supportsCamera)
               Positioned(
                 bottom: 24,
                 left: 0,
@@ -431,8 +528,8 @@ class _UploadScreenState
                 ),
                 child:
                     Text(
-                  kIsWeb
-                      ? 'Sélectionnez une vidéo'
+                    !_supportsCamera
+                      ? 'Importer une vidéo ou des photos'
                       : (_isRecording
                           ? 'Enregistrement…'
                           : 'Prêt à publier'),
@@ -452,7 +549,7 @@ class _UploadScreenState
   }
 
   Widget _buildMainContent() {
-    if (kIsWeb) {
+    if (!_supportsCamera) {
       return Center(
         child: Column(
           mainAxisAlignment:
@@ -480,7 +577,7 @@ class _UploadScreenState
               height: 10,
             ),
             const Text(
-              'Sélectionnez une vidéo depuis votre ordinateur.',
+              'Sélectionnez une vidéo ou plusieurs photos.',
               textAlign:
                   TextAlign.center,
               style: TextStyle(
@@ -492,14 +589,14 @@ class _UploadScreenState
               height: 28,
             ),
             ElevatedButton.icon(
-              onPressed: _pickVideo,
+              onPressed: _showMediaPicker,
               icon:
                   const Icon(
                 Icons.video_library,
               ),
               label:
                   const Text(
-                'Choisir une vidéo',
+                'Choisir un média',
               ),
               style:
                   ElevatedButton.styleFrom(

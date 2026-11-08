@@ -7,6 +7,7 @@ import '../services/auth_service.dart';
 import '../services/session_manager.dart';
 import '../services/user_service.dart';
 import '../widgets/video_player_item.dart';
+import '../widgets/video_thumbnail.dart';
 import '../screens/auth_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -202,6 +203,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return '${_serverBaseUrl()}${thumbnailPath.startsWith('/') ? '' : '/'}$thumbnailPath';
   }
 
+  Widget _buildVideoThumbnail(String thumbnailUrl, String videoUrl) {
+    return VideoThumbnail(
+      thumbnailUrl: thumbnailUrl,
+      videoUrl: videoUrl,
+    );
+  }
+
   String _videoMediaUrl(Map<String, dynamic> video) {
     final String rawPath = (video['video_url'] ?? video['video_path'] ?? '').toString();
     if (rawPath.isEmpty) return '';
@@ -279,16 +287,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
     }
 
-    return GridView.builder(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 1100
+            ? 5
+            : constraints.maxWidth >= 760
+                ? 4
+                : 3;
+        return GridView.builder(
       padding: const EdgeInsets.only(top: 8),
       shrinkWrap: true,
       physics: const AlwaysScrollableScrollPhysics(),
       itemCount: videos.length,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: columns,
         crossAxisSpacing: 4,
         mainAxisSpacing: 4,
-        childAspectRatio: 0.65,
+        childAspectRatio: 0.62,
       ),
       itemBuilder: (context, index) {
         final video = videos[index] as Map<String, dynamic>;
@@ -314,30 +329,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
             child: Container(
               decoration: BoxDecoration(
                 color: const Color(0xFF0F172A),
-                image: thumbnailUrl.isNotEmpty
-                    ? DecorationImage(
-                        image: NetworkImage(thumbnailUrl),
-                        fit: BoxFit.cover,
-                      )
-                    : null,
               ),
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  if (thumbnailUrl.isNotEmpty)
-                    Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.bottomCenter,
-                          end: Alignment.center,
-                          colors: [Colors.black.withValues(alpha: 0.75), Colors.transparent],
-                        ),
+                  Positioned.fill(child: _buildVideoThumbnail(thumbnailUrl, mediaUrl)),
+                  Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.center,
+                        colors: [Colors.black.withValues(alpha: 0.75), Colors.transparent],
                       ),
-                    )
-                  else
-                    const Center(
-                      child: Icon(Icons.videocam_outlined, color: Colors.white54, size: 32),
                     ),
+                  ),
                   Center(
                     child: Container(
                       padding: const EdgeInsets.all(8),
@@ -384,6 +389,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
         );
+      },
+    );
       },
     );
   }
@@ -470,29 +477,56 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               Text(bioText, style: const TextStyle(color: Colors.white70, fontSize: 14, height: 1.5)),
                               const SizedBox(height: 20),
                               Row(
+                                mainAxisAlignment: _isOwnProfile ? MainAxisAlignment.start : MainAxisAlignment.center,
                                 children: [
-                                  Expanded(
-                                    child: ElevatedButton(
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: _isOwnProfile ? const Color(0xFF7C9BFF) : (_profile?['is_following'] == true ? Colors.white : const Color(0xFF7C9BFF)),
-                                        foregroundColor: _isOwnProfile ? Colors.white : (_profile?['is_following'] == true ? Colors.black : Colors.white),
-                                        padding: const EdgeInsets.symmetric(vertical: 14),
-                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                  if (_isOwnProfile)
+                                    Expanded(
+                                      child: ElevatedButton(
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(0xFF7C9BFF),
+                                          foregroundColor: Colors.white,
+                                          padding: const EdgeInsets.symmetric(vertical: 14),
+                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                        ),
+                                        onPressed: _openEditProfileSheet,
+                                        child: const Text('Modifier le profil', style: TextStyle(fontWeight: FontWeight.bold)),
                                       ),
-                                      onPressed: _isOwnProfile ? _openEditProfileSheet : (_isFollowLoading ? null : _toggleFollow),
-                                      child: AnimatedScale(
-                                        scale: _pulseFollow ? 1.05 : 1.0,
-                                        duration: const Duration(milliseconds: 200),
-                                        curve: Curves.easeOut,
-                                        child: _isFollowLoading && !_isOwnProfile
-                                            ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                                            : Text(
-                                                _isOwnProfile ? 'Modifier le profil' : (_profile?['is_following'] == true ? 'Abonné' : 'S’abonner'),
-                                                style: const TextStyle(fontWeight: FontWeight.bold),
-                                              ),
+                                    )
+                                  else
+                                    Tooltip(
+                                      message: _profile?['is_following'] == true ? 'Se désabonner' : 'S’abonner',
+                                      child: InkWell(
+                                        onTap: _isFollowLoading ? null : _toggleFollow,
+                                        customBorder: const CircleBorder(),
+                                        child: AnimatedScale(
+                                          scale: _pulseFollow ? 1.12 : 1.0,
+                                          duration: const Duration(milliseconds: 200),
+                                          child: Container(
+                                            width: 46,
+                                            height: 46,
+                                            decoration: BoxDecoration(
+                                              color: _profile?['is_following'] == true ? Colors.white : Colors.redAccent,
+                                              shape: BoxShape.circle,
+                                            ),
+                                            alignment: Alignment.center,
+                                            child: _isFollowLoading
+                                                ? SizedBox(
+                                                    width: 20,
+                                                    height: 20,
+                                                    child: CircularProgressIndicator(
+                                                      color: _profile?['is_following'] == true ? Colors.redAccent : Colors.white,
+                                                      strokeWidth: 2,
+                                                    ),
+                                                  )
+                                                : Icon(
+                                                    _profile?['is_following'] == true ? Icons.check : Icons.add,
+                                                    color: _profile?['is_following'] == true ? Colors.redAccent : Colors.white,
+                                                    size: 27,
+                                                  ),
+                                          ),
+                                        ),
                                       ),
                                     ),
-                                  ),
                                   if (!_isOwnProfile) ...[
                                     const SizedBox(width: 12),
                                     Container(

@@ -2,13 +2,17 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
-import 'package:video_trimmer/video_trimmer.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 
 import '../services/auth_service.dart';
 import '../services/session_manager.dart';
+import '../services/video_edit_service.dart';
 
 class PublishScreen extends StatefulWidget {
   final String videoPath;
@@ -25,15 +29,24 @@ class PublishScreen extends StatefulWidget {
 class _PublishScreenState extends State<PublishScreen> {
   final TextEditingController _titleController = TextEditingController();
 
-  final Trimmer _trimmer = Trimmer();
+  final VideoEditService _videoEditService = VideoEditService();
+  late final Player _player;
+  late final VideoController _playerController;
+  StreamSubscription<Duration>? _positionSubscription;
+  StreamSubscription<Duration>? _durationSubscription;
+  StreamSubscription<bool>? _playingSubscription;
 
   double _startValue = 0.0;
   double _endValue = 0.0;
+  Duration _videoDuration = Duration.zero;
+  Duration _videoPosition = Duration.zero;
 
   bool _isTrimmerLoading = true;
   bool _isSaving = false;
   bool _isPlaying = false;
   bool _isSending = false;
+  bool _isMuted = false;
+  bool _isFinalPreview = false;
 
   int _selectedFilterIndex = 0;
 
@@ -42,6 +55,9 @@ class _PublishScreenState extends State<PublishScreen> {
   String? _videoFileName;
   int? _videoFileSize;
   String? _fileErrorMessage;
+  String? _musicPath;
+  String? _preparedVideoPath;
+  bool _isRestartingTrim = false;
 
   final int _maxVideoBytes = 100 * 1024 * 1024;
 
@@ -160,6 +176,17 @@ class _PublishScreenState extends State<PublishScreen> {
     super.initState();
 
     _currentVideoPath = widget.videoPath;
+    _player = Player();
+    _playerController = VideoController(_player);
+    _positionSubscription = _player.stream.position.listen(_handlePositionChanged);
+    _durationSubscription = _player.stream.duration.listen((duration) {
+      if (duration > Duration.zero && mounted) {
+        setState(() => _videoDuration = duration);
+      }
+    });
+    _playingSubscription = _player.stream.playing.listen((playing) {
+      if (mounted) setState(() => _isPlaying = playing);
+    });
 
     _loadVideoForTrimming();
   }
@@ -187,27 +214,15 @@ class _PublishScreenState extends State<PublishScreen> {
 
       _prepareVideoInfo();
 
-      await _trimmer.loadVideo(
-        videoFile: videoFile,
-      );
+      final duration = await _videoEditService.getDuration(_currentVideoPath);
+      await _player.open(Media(Uri.file(_currentVideoPath).toString()), play: false);
+      await _player.setPlaylistMode(PlaylistMode.single);
+      await _player.setVolume(100);
 
       if (!mounted) return;
 
-      // Met le volume à 100 %.
-      try {
-        await _trimmer.videoPlayerController?.setVolume(1.0);
-      } catch (e) {
-        debugPrint(
-          'Impossible de régler le volume de la vidéo : $e',
-        );
-      }
-
-      final duration =
-          _trimmer.videoPlayerController?.value.duration;
-
-      if (duration != null) {
-        _endValue = duration.inMilliseconds.toDouble();
-      }
+      _videoDuration = duration;
+      _endValue = duration.inMilliseconds.toDouble();
 
       if (!mounted) return;
 
@@ -229,6 +244,117 @@ class _PublishScreenState extends State<PublishScreen> {
     }
   }
 
+  Future<void> _pickMusic() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.audio,
+      withData: true,
+    );
+    if (!mounted || result == null) return;
+
+    final file = result.files.single;
+    var path = file.path;
+    if (path == null || !File(path).existsSync()) {
+      final bytes = file.bytes;
+      if (bytes != null && bytes.isNotEmpty) {
+        final directory = await getTemporaryDirectory();
+        path = '${directory.path}${Platform.pathSeparator}'
+            'reem_music_${DateTime.now().microsecondsSinceEpoch}.${file.extension ?? 'audio'}';
+        await File(path).writeAsBytes(bytes, flush: true);
+      }
+    }
+    if (path == null || path.isEmpty || !File(path).existsSync()) {
+      _showErrorSnackBar('Impossible de lire ce fichier audio.');
+      return;
+    }
+
+    setState(() {
+      _musicPath = path;
+      _preparedVideoPath = null;
+      _isFinalPreview = false;
+    });
+  }
+
+  Future<void> _prepareFinalPreview() async {
+    if (_isSaving || _isSending) return;
+    if (_fileErrorMessage != null) {
+      _showErrorSnackBar(_fileErrorMessage!);
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    try {
+      await _player.pause();
+      final outputPath = await _videoEditService.renderVideo(
+        inputPath: _currentVideoPath,
+        startMilliseconds: _startValue,
+        endMilliseconds: _endValue,
+        muteOriginal: _isMuted,
+        filterName: _filters[_selectedFilterIndex]['name'] as String,
+        musicPath: _musicPath,
+      );
+      await _player.open(Media(Uri.file(outputPath).toString()), play: false);
+      await _player.setVolume(100);
+
+      if (!mounted) return;
+
+      setState(() {
+        _preparedVideoPath = outputPath;
+        _isFinalPreview = true;
+        _videoPosition = Duration.zero;
+        _isSaving = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      _showErrorSnackBar('Impossible de préparer l’aperçu : $e');
+    }
+  }
+
+  Future<void> _returnToEditor() async {
+    await _player.pause();
+    await _player.open(Media(Uri.file(_currentVideoPath).toString()), play: false);
+    await _player.setVolume(100);
+    if (!mounted) return;
+    setState(() {
+      _preparedVideoPath = null;
+      _isFinalPreview = false;
+      _videoPosition = Duration.zero;
+    });
+  }
+
+  void _handlePositionChanged(Duration position) {
+    if (!mounted) return;
+    setState(() => _videoPosition = position);
+    if (!_isFinalPreview &&
+        _player.state.playing &&
+        !_isRestartingTrim &&
+        position.inMilliseconds >= _endValue &&
+        _endValue > _startValue) {
+      _isRestartingTrim = true;
+      _player.pause().then((_) => _player.seek(Duration(milliseconds: _startValue.round()))).then((_) {
+        if (mounted) return _player.play();
+      }).whenComplete(() => _isRestartingTrim = false);
+    }
+  }
+
+  Future<void> _toggleEditorPlayback() async {
+    if (_player.state.playing) {
+      await _player.pause();
+      return;
+    }
+    if (_videoPosition.inMilliseconds < _startValue ||
+        _videoPosition.inMilliseconds >= _endValue) {
+      await _player.seek(Duration(milliseconds: _startValue.round()));
+    }
+    await _player.play();
+  }
+
+  String _formatDuration(int milliseconds) {
+    final seconds = milliseconds ~/ 1000;
+    final minutes = seconds ~/ 60;
+    return '${minutes.toString().padLeft(2, '0')}:${(seconds % 60).toString().padLeft(2, '0')}';
+  }
+
   void _prepareVideoInfo() {
     final videoFile = File(_currentVideoPath);
 
@@ -242,13 +368,7 @@ class _PublishScreenState extends State<PublishScreen> {
 
     _videoFileSize = videoFile.lengthSync();
 
-    if (_videoFileSize != null &&
-        _videoFileSize! > _maxVideoBytes) {
-      _fileErrorMessage =
-          'La vidéo dépasse la taille maximale de 100 Mo.';
-    } else {
-      _fileErrorMessage = null;
-    }
+    _fileErrorMessage = null;
 
     debugPrint(
       '🎥 Vidéo : $_videoFileName',
@@ -259,9 +379,6 @@ class _PublishScreenState extends State<PublishScreen> {
     );
   }
 
-  /// Prépare la vidéo découpée puis l'envoie à Laravel.
-  ///
-  /// Les filtres sont actuellement uniquement visuels dans l'aperçu.
   Future<void> _uploadVideoToLaravel() async {
     if (_isSaving || _isSending) return;
 
@@ -279,66 +396,12 @@ class _PublishScreenState extends State<PublishScreen> {
       return;
     }
 
-    if (_endValue <= _startValue) {
-      _showErrorSnackBar(
-        'La durée sélectionnée de la vidéo est invalide.',
-      );
+    if (_preparedVideoPath == null) {
+      _showErrorSnackBar('Prévisualisez la vidéo avant de la publier.');
       return;
     }
 
-    if (!mounted) return;
-
-    setState(() {
-      _isSaving = true;
-    });
-
-    try {
-      await _trimmer.saveTrimmedVideo(
-        startValue: _startValue,
-        endValue: _endValue,
-        onSave: (outputPath) {
-          if (!mounted) return;
-
-          if (outputPath == null || outputPath.isEmpty) {
-            setState(() {
-              _isSaving = false;
-            });
-
-            _showErrorSnackBar(
-              'Impossible de préparer la vidéo.',
-            );
-
-            return;
-          }
-
-          debugPrint(
-            '✅ Vidéo découpée : $outputPath',
-          );
-
-          setState(() {
-            _isSaving = false;
-          });
-
-          // Le fichier découpé est envoyé directement.
-          // Aucun FFmpeg n'est nécessaire.
-          _performUpload(outputPath);
-        },
-      );
-    } catch (e) {
-      debugPrint(
-        '❌ Erreur lors du découpage : $e',
-      );
-
-      if (!mounted) return;
-
-      setState(() {
-        _isSaving = false;
-      });
-
-      _showErrorSnackBar(
-        'Impossible de préparer la vidéo : $e',
-      );
-    }
+    await _performUpload(_preparedVideoPath!);
   }
 
   Future<void> _performUpload(String videoPath) async {
@@ -627,7 +690,10 @@ class _PublishScreenState extends State<PublishScreen> {
 
     _titleController.dispose();
 
-    _trimmer.dispose();
+    _positionSubscription?.cancel();
+    _durationSubscription?.cancel();
+    _playingSubscription?.cancel();
+    _player.dispose();
 
     super.dispose();
   }
@@ -639,8 +705,8 @@ class _PublishScreenState extends State<PublishScreen> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text(
-          'Publier',
+        title: Text(
+          _isFinalPreview ? 'Aperçu avant publication' : 'Modifier la vidéo',
           style: TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.bold,
@@ -659,7 +725,9 @@ class _PublishScreenState extends State<PublishScreen> {
       ),
       body: _isSending
           ? _buildUploadProgress()
-          : _buildEditor(),
+          : _isFinalPreview
+            ? _buildFinalPreview()
+            : _buildEditor(),
     );
   }
 
@@ -760,12 +828,16 @@ class _PublishScreenState extends State<PublishScreen> {
 
     return Stack(
       children: [
-        ColorFiltered(
-          colorFilter:
-              _filters[_selectedFilterIndex]
-                  ['filter'],
-          child: VideoViewer(
-            trimmer: _trimmer,
+        Container(
+          color: const Color(0xFF333333),
+          alignment: Alignment.center,
+          child: ColorFiltered(
+            colorFilter: _filters[_selectedFilterIndex]['filter'],
+            child: Video(
+              controller: _playerController,
+              controls: NoVideoControls,
+              fit: BoxFit.contain,
+            ),
           ),
         ),
 
@@ -775,30 +847,86 @@ class _PublishScreenState extends State<PublishScreen> {
               _isPlaying
                   ? Icons.pause_circle_filled
                   : Icons.play_circle_filled,
-              color:
-                  Colors.white.withOpacity(0.8),
+                color:
+                  Colors.white.withValues(alpha: 0.8),
               size: 60,
             ),
-            onPressed: () async {
-              try {
-                final playbackState =
-                    await _trimmer
-                        .videoPlaybackControl(
-                  startValue: _startValue,
-                  endValue: _endValue,
-                );
+            onPressed: _toggleEditorPlayback,
+          ),
+        ),
+      ],
+    );
+  }
 
-                if (!mounted) return;
-
-                setState(() {
-                  _isPlaying = playbackState;
-                });
-              } catch (e) {
-                debugPrint(
-                  'Erreur lecture vidéo : $e',
-                );
-              }
-            },
+  Widget _buildFinalPreview() {
+    return Column(
+      children: [
+        Expanded(
+          child: Container(
+            width: double.infinity,
+            color: const Color(0xFF333333),
+            alignment: Alignment.center,
+            child: Video(
+              controller: _playerController,
+              controls: NoVideoControls,
+              fit: BoxFit.contain,
+            ),
+          ),
+        ),
+        Container(
+          color: const Color(0xFF0F1628),
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+          child: Column(
+            children: [
+              Slider(
+                min: 0,
+                max: _videoDuration.inMilliseconds.toDouble().clamp(1, double.infinity),
+                value: _videoPosition.inMilliseconds.toDouble().clamp(
+                      0,
+                      _videoDuration.inMilliseconds.toDouble().clamp(1, double.infinity),
+                    ),
+                activeColor: Colors.redAccent,
+                onChanged: (value) => _player.seek(Duration(milliseconds: value.round())),
+              ),
+              Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      tooltip: _isPlaying ? 'Pause' : 'Lire',
+                      icon: Icon(
+                        _isPlaying ? Icons.pause : Icons.play_arrow,
+                        color: Colors.white,
+                        size: 32,
+                      ),
+                      onPressed: () => _isPlaying ? _player.pause() : _player.play(),
+                    ),
+                    const Text('Aperçu final', style: TextStyle(color: Colors.white70)),
+                  ],
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _returnToEditor,
+                      icon: const Icon(Icons.edit_outlined),
+                      label: const Text('Modifier'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _isSaving ? null : _uploadVideoToLaravel,
+                      icon: const Icon(Icons.publish),
+                      label: const Text('Publier'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF7C4DFF),
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       ],
@@ -806,12 +934,17 @@ class _PublishScreenState extends State<PublishScreen> {
   }
 
   Widget _buildBottomEditor() {
-    return Container(
-      color: const Color(0xFF0F1628),
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.48,
+      ),
+      child: Container(
+        color: const Color(0xFF0F1628),
+        padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+        child: SingleChildScrollView(
+          child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
           SizedBox(
             height: 60,
             child: ListView.builder(
@@ -828,6 +961,7 @@ class _PublishScreenState extends State<PublishScreen> {
                     setState(() {
                       _selectedFilterIndex =
                           index;
+                      _preparedVideoPath = null;
                     });
                   },
                   child: Container(
@@ -871,33 +1005,71 @@ class _PublishScreenState extends State<PublishScreen> {
 
           const SizedBox(height: 16),
 
-          if (!_isTrimmerLoading)
-            TrimViewer(
-              trimmer: _trimmer,
-              viewerHeight: 50,
-              viewerWidth:
-                  MediaQuery.of(context)
-                      .size
-                      .width,
-              durationStyle:
-                  DurationStyle.FORMAT_MM_SS,
-              onChangeStart: (value) {
-                _startValue = value;
-              },
-              onChangeEnd: (value) {
-                _endValue = value;
-              },
-              onChangePlaybackState:
-                  (value) {
-                if (!mounted) return;
-
+          if (_videoDuration > Duration.zero) ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(_formatDuration(_startValue.round()), style: const TextStyle(color: Colors.white70)),
+                Text('Durée sélectionnée : ${_formatDuration((_endValue - _startValue).round())}', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                Text(_formatDuration(_endValue.round()), style: const TextStyle(color: Colors.white70)),
+              ],
+            ),
+            RangeSlider(
+              min: 0,
+              max: _videoDuration.inMilliseconds.toDouble(),
+              divisions: _videoDuration.inMilliseconds > 1000 ? _videoDuration.inMilliseconds ~/ 500 : null,
+              values: RangeValues(_startValue, _endValue),
+              activeColor: Colors.redAccent,
+              onChanged: (values) {
                 setState(() {
-                  _isPlaying = value;
+                  _startValue = values.start;
+                  _endValue = values.end;
+                  _preparedVideoPath = null;
                 });
               },
+              onChangeEnd: (values) => _player.seek(Duration(milliseconds: values.start.round())),
             ),
+          ],
 
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
+
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => setState(() {
+                    _isMuted = !_isMuted;
+                    _preparedVideoPath = null;
+                  }),
+                  icon: Icon(_isMuted ? Icons.volume_off : Icons.volume_up),
+                  label: Text(_isMuted ? 'Son original coupé' : 'Son original'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _pickMusic,
+                  icon: const Icon(Icons.music_note),
+                  label: Text(
+                    _musicPath == null ? 'Ajouter musique' : _getFileName(_musicPath!),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+              if (_musicPath != null)
+                IconButton(
+                  tooltip: 'Retirer la musique',
+                  onPressed: () => setState(() {
+                    _musicPath = null;
+                    _preparedVideoPath = null;
+                  }),
+                  icon: const Icon(Icons.close, color: Colors.white70),
+                ),
+            ],
+          ),
+
+          const SizedBox(height: 8),
 
           TextField(
             controller: _titleController,
@@ -923,7 +1095,7 @@ class _PublishScreenState extends State<PublishScreen> {
             ),
           ),
 
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
 
           SizedBox(
             width: double.infinity,
@@ -941,13 +1113,9 @@ class _PublishScreenState extends State<PublishScreen> {
                 disabledBackgroundColor:
                     Colors.grey.shade800,
               ),
-              onPressed:
-                  (_isSending ||
-                          _isSaving ||
-                          _fileErrorMessage !=
-                              null)
-                      ? null
-                      : _uploadVideoToLaravel,
+                onPressed: (_isSending || _isSaving || _fileErrorMessage != null)
+                  ? null
+                  : _prepareFinalPreview,
               child: _isSaving
                   ? const Text(
                       'Préparation...',
@@ -955,8 +1123,8 @@ class _PublishScreenState extends State<PublishScreen> {
                         color: Colors.white,
                       ),
                     )
-                  : const Text(
-                      'Publier',
+                    : const Text(
+                      'Prévisualiser',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 15,
@@ -966,7 +1134,9 @@ class _PublishScreenState extends State<PublishScreen> {
                     ),
             ),
           ),
-        ],
+          ],
+          ),
+        ),
       ),
     );
   }
