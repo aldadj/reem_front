@@ -1,5 +1,34 @@
 <!DOCTYPE html>
 <html>
+  <script>
+    // Reem : autoplay des vidéos sur le web.
+    // Tant que l'utilisateur n'a pas touché la page, les vidéos démarrent muettes.
+    // Au premier clic ou toucher, le son est remis.
+    (function () {
+      var forcedMuted = [];
+      var nativePlay = HTMLMediaElement.prototype.play;
+  
+      function hasInteracted() {
+        return navigator.userActivation && navigator.userActivation.hasBeenActive;
+      }
+  
+      HTMLMediaElement.prototype.play = function () {
+        if (!hasInteracted()) {
+          this.muted = true;
+          if (forcedMuted.indexOf(this) === -1) forcedMuted.push(this);
+        }
+        return nativePlay.apply(this, arguments);
+      };
+  
+      function unmute() {
+        forcedMuted.forEach(function (el) { el.muted = false; });
+        forcedMuted = [];
+      }
+      ['pointerup', 'touchend', 'mouseup', 'click', 'keydown'].forEach(function (type) {
+        window.addEventListener(type, unmute, true);
+      });
+    })();
+  </script>
 <head>
   <!--
     If you are serving your web app in a path other than the root, change the

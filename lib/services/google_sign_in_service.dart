@@ -11,10 +11,12 @@ class GoogleSignInService {
   static const String _googleClientId =
       'YOUR_WEB_CLIENT_ID.apps.googleusercontent.com';
 
+  // Sur le web, "serverClientId" n'est pas supporté : il faisait planter
+  // l'écran de connexion (Assertion failed). On ne le donne que sur mobile.
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     scopes: ['email', 'profile'],
     clientId: _googleClientId,
-    serverClientId: _googleClientId,
+    serverClientId: kIsWeb ? null : _googleClientId,
   );
 
   Future<String?> signInAndGetIdToken() async {

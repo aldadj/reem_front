@@ -50,6 +50,13 @@ class _PublishScreenState extends State<PublishScreen> {
 
   int _selectedFilterIndex = 0;
 
+  // Recadrage : false = vidéo entière, true = remplit l'écran 9:16
+  bool _cropFill = false;
+  double _cropZoom = 1.0;
+  double _cropPanX = 0.0;
+  double _cropPanY = 0.0;
+  double _gestureStartZoom = 1.0;
+
   double _uploadProgress = 0;
 
   String? _videoFileName;
@@ -229,6 +236,9 @@ class _PublishScreenState extends State<PublishScreen> {
       setState(() {
         _isTrimmerLoading = false;
       });
+
+      // La vidéo importée / filmée démarre tout de suite pour l'éditer.
+      await _player.play();
     } catch (e) {
       debugPrint(
         '❌ Erreur lors du chargement de la vidéo : $e',
@@ -291,6 +301,10 @@ class _PublishScreenState extends State<PublishScreen> {
         muteOriginal: _isMuted,
         filterName: _filters[_selectedFilterIndex]['name'] as String,
         musicPath: _musicPath,
+        cropFill: _cropFill,
+        zoom: _cropZoom,
+        panX: _cropPanX,
+        panY: _cropPanY,
       );
       await _player.open(Media(Uri.file(outputPath).toString()), play: false);
       await _player.setVolume(100);
@@ -809,6 +823,71 @@ class _PublishScreenState extends State<PublishScreen> {
     );
   }
 
+  /// Cadre 9:16 = exactement ce qui sera publié.
+  /// "Ajuster" : vidéo entière. "Remplir" : on glisse / pince pour cadrer.
+  Widget _buildCropFrame() {
+    return AspectRatio(
+      aspectRatio: 9 / 16,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final frameWidth = constraints.maxWidth;
+          final frameHeight = constraints.maxHeight;
+          final alignment = Alignment(_cropPanX, _cropPanY);
+
+          final video = ColorFiltered(
+            colorFilter: _filters[_selectedFilterIndex]['filter'],
+            child: _cropFill
+                ? OverflowBox(
+                    alignment: alignment,
+                    minWidth: frameWidth * _cropZoom,
+                    maxWidth: frameWidth * _cropZoom,
+                    minHeight: frameHeight * _cropZoom,
+                    maxHeight: frameHeight * _cropZoom,
+                    child: Video(
+                      controller: _playerController,
+                      controls: NoVideoControls,
+                      fit: BoxFit.cover,
+                      alignment: alignment,
+                    ),
+                  )
+                : Video(
+                    controller: _playerController,
+                    controls: NoVideoControls,
+                    fit: BoxFit.contain,
+                  ),
+          );
+
+          return ClipRect(
+            child: ColoredBox(
+              color: Colors.black,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onScaleStart: (_) => _gestureStartZoom = _cropZoom,
+                onScaleUpdate: (details) {
+                  if (!_cropFill) return;
+                  setState(() {
+                    _cropZoom =
+                        (_gestureStartZoom * details.scale).clamp(1.0, 4.0).toDouble();
+                    _cropPanX = (_cropPanX -
+                            details.focalPointDelta.dx / (frameWidth / 2))
+                        .clamp(-1.0, 1.0)
+                        .toDouble();
+                    _cropPanY = (_cropPanY -
+                            details.focalPointDelta.dy / (frameHeight / 2))
+                        .clamp(-1.0, 1.0)
+                        .toDouble();
+                    _preparedVideoPath = null;
+                  });
+                },
+                child: video,
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Widget _buildVideoPreview() {
     if (_fileErrorMessage != null) {
       return Center(
@@ -829,16 +908,9 @@ class _PublishScreenState extends State<PublishScreen> {
     return Stack(
       children: [
         Container(
-          color: const Color(0xFF333333),
+          color: const Color(0xFF111111),
           alignment: Alignment.center,
-          child: ColorFiltered(
-            colorFilter: _filters[_selectedFilterIndex]['filter'],
-            child: Video(
-              controller: _playerController,
-              controls: NoVideoControls,
-              fit: BoxFit.contain,
-            ),
-          ),
+          child: _buildCropFrame(),
         ),
 
         Center(
@@ -1003,7 +1075,73 @@ class _PublishScreenState extends State<PublishScreen> {
             ),
           ),
 
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
+
+          // ---- Recadrage ----
+          Row(
+            children: [
+              const Icon(Icons.crop_rotate, color: Colors.white70, size: 20),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                label: const Text('Ajuster'),
+                selected: !_cropFill,
+                selectedColor: Colors.redAccent,
+                backgroundColor: Colors.black38,
+                labelStyle: const TextStyle(color: Colors.white),
+                onSelected: (_) => setState(() {
+                  _cropFill = false;
+                  _preparedVideoPath = null;
+                }),
+              ),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                label: const Text('Remplir'),
+                selected: _cropFill,
+                selectedColor: Colors.redAccent,
+                backgroundColor: Colors.black38,
+                labelStyle: const TextStyle(color: Colors.white),
+                onSelected: (_) => setState(() {
+                  _cropFill = true;
+                  _preparedVideoPath = null;
+                }),
+              ),
+              if (_cropFill) ...[
+                Expanded(
+                  child: Slider(
+                    min: 1,
+                    max: 4,
+                    value: _cropZoom,
+                    activeColor: Colors.redAccent,
+                    onChanged: (value) => setState(() {
+                      _cropZoom = value;
+                      _preparedVideoPath = null;
+                    }),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Recentrer',
+                  icon: const Icon(Icons.restart_alt, color: Colors.white70),
+                  onPressed: () => setState(() {
+                    _cropZoom = 1.0;
+                    _cropPanX = 0.0;
+                    _cropPanY = 0.0;
+                    _preparedVideoPath = null;
+                  }),
+                ),
+              ] else
+                const Spacer(),
+            ],
+          ),
+          if (_cropFill)
+            const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: Text(
+                'Glisse sur la vidéo pour la déplacer, pince ou utilise le curseur pour zoomer.',
+                style: TextStyle(color: Colors.white54, fontSize: 11),
+              ),
+            ),
+
+          const SizedBox(height: 10),
 
           if (_videoDuration > Duration.zero) ...[
             Row(

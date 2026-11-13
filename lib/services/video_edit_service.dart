@@ -9,6 +9,9 @@ class VideoEditService {
   static const int _width = 720;
   static const int _height = 1280;
   static const int _photoDurationSeconds = 3;
+  static const Set<String> _imageExtensions = {
+    'jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'bmp', 'gif',
+  };
 
   Future<Duration> getDuration(String videoPath) async {
     final session = await FFprobeKit.getMediaInformation(videoPath);
@@ -79,6 +82,181 @@ class VideoEditService {
     return outputPath;
   }
 
+  // ---------------------------------------------------------------------------
+  // FUSION DE PLUSIEURS MÉDIAS (vidéos et/ou photos, dans l'ordre donné)
+  // ---------------------------------------------------------------------------
+
+  bool _isImage(String path) {
+    final dot = path.lastIndexOf('.');
+    if (dot < 0) return false;
+    return _imageExtensions.contains(path.substring(dot + 1).toLowerCase());
+  }
+
+  Future<bool> _hasAudio(String videoPath) async {
+    try {
+      final session = await FFprobeKit.getMediaInformation(videoPath);
+      final streams = session.getMediaInformation()?.getStreams() ?? const [];
+      return streams.any((stream) => stream.getType() == 'audio');
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Assemble des vidéos et des photos en une seule vidéo 720x1280.
+  ///
+  /// Chaque média est d'abord converti au même format (taille, images/s,
+  /// audio), puis les morceaux sont collés bout à bout sans ré-encodage.
+  /// Une photo dure [_photoDurationSeconds] secondes. Les vidéos sans son
+  /// reçoivent un silence pour que le résultat reste homogène.
+  Future<String> mergeMedia(List<String> mediaPaths) async {
+    if (mediaPaths.isEmpty) {
+      throw ArgumentError('Sélectionnez au moins un média.');
+    }
+    for (final path in mediaPaths) {
+      if (!File(path).existsSync()) {
+        throw FileSystemException('Fichier introuvable.', path);
+      }
+    }
+
+    final directory = await getTemporaryDirectory();
+    final separator = Platform.pathSeparator;
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final segments = <String>[];
+    final temporaryFiles = <String>[];
+    String? result;
+
+    try {
+      for (var index = 0; index < mediaPaths.length; index++) {
+        final segmentPath =
+            '${directory.path}${separator}reem_segment_${stamp}_$index.mp4';
+        temporaryFiles.add(segmentPath);
+        await _normalizeSegment(mediaPaths[index], segmentPath);
+        segments.add(segmentPath);
+      }
+
+      if (segments.length == 1) {
+        result = segments.first;
+        temporaryFiles.remove(result);
+        return result;
+      }
+
+      final listPath = '${directory.path}${separator}reem_concat_$stamp.txt';
+      temporaryFiles.add(listPath);
+      final buffer = StringBuffer();
+      for (final segment in segments) {
+        buffer.writeln("file '${segment.replaceAll("'", r"'\''")}'");
+      }
+      await File(listPath).writeAsString(buffer.toString(), flush: true);
+
+      final outputPath =
+          '${directory.path}${separator}reem_merged_$stamp.mp4';
+      await _run([
+        '-y',
+        '-f',
+        'concat',
+        '-safe',
+        '0',
+        '-i',
+        listPath,
+        '-c',
+        'copy',
+        '-movflags',
+        '+faststart',
+        outputPath,
+      ], outputPath);
+      result = outputPath;
+      return outputPath;
+    } finally {
+      for (final path in temporaryFiles) {
+        try {
+          final file = File(path);
+          if (file.existsSync()) await file.delete();
+        } catch (_) {}
+      }
+    }
+  }
+
+  Future<void> _normalizeSegment(String inputPath, String outputPath) async {
+    final video = 'scale=$_width:$_height:force_original_aspect_ratio=decrease,'
+        'pad=$_width:$_height:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p';
+    const audio = 'aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo';
+    const silence = 'anullsrc=r=44100:cl=stereo';
+    final arguments = <String>['-y'];
+
+    if (_isImage(inputPath)) {
+      arguments.addAll([
+        '-loop',
+        '1',
+        '-t',
+        '$_photoDurationSeconds',
+        '-i',
+        inputPath,
+        '-filter_complex',
+        '[0:v]$video[v];$silence,atrim=duration=$_photoDurationSeconds[a]',
+        '-map',
+        '[v]',
+        '-map',
+        '[a]',
+        '-t',
+        '$_photoDurationSeconds',
+      ]);
+    } else {
+      final hasAudio = await _hasAudio(inputPath);
+      arguments.addAll([
+        '-i',
+        inputPath,
+        '-filter_complex',
+        hasAudio
+            ? '[0:v:0]$video[v];[0:a:0]$audio[a]'
+            : '[0:v:0]$video[v];$silence[a]',
+        '-map',
+        '[v]',
+        '-map',
+        '[a]',
+      ]);
+      if (!hasAudio) {
+        // Le silence est infini : on borne la sortie à la durée de la vidéo.
+        try {
+          final duration = await getDuration(inputPath);
+          arguments.addAll(['-t', (duration.inMilliseconds / 1000).toStringAsFixed(3)]);
+        } catch (_) {
+          arguments.add('-shortest');
+        }
+      }
+    }
+
+    arguments.addAll([
+      '-c:v',
+      'mpeg4',
+      '-b:v',
+      '1000k',
+      '-maxrate',
+      '1200k',
+      '-bufsize',
+      '2400k',
+      '-c:a',
+      'aac',
+      '-b:a',
+      '96k',
+      '-ar',
+      '44100',
+      '-ac',
+      '2',
+      '-movflags',
+      '+faststart',
+      outputPath,
+    ]);
+    await _run(arguments, outputPath);
+  }
+
+  // ---------------------------------------------------------------------------
+  // RENDU FINAL : coupe, recadrage, filtre, son
+  // ---------------------------------------------------------------------------
+
+  /// [cropFill] : false = la vidéo entière est visible (bandes noires si besoin),
+  /// true = la vidéo remplit l'écran 9:16 et dépasse (recadrage).
+  /// [zoom] (1 à 4) et [panX]/[panY] (-1 à 1) règlent le cadrage quand
+  /// [cropFill] est vrai ; 0 = centré.
   Future<String> renderVideo({
     required String inputPath,
     required double startMilliseconds,
@@ -86,6 +264,10 @@ class VideoEditService {
     required bool muteOriginal,
     required String filterName,
     String? musicPath,
+    bool cropFill = false,
+    double zoom = 1.0,
+    double panX = 0.0,
+    double panY = 0.0,
   }) async {
     if (!File(inputPath).existsSync()) {
       throw FileSystemException('Vidéo introuvable.', inputPath);
@@ -136,11 +318,23 @@ class VideoEditService {
       'Chaud' => 'colorbalance=rs=0.1:bs=-0.1',
       _ => null,
     };
-    final filters = <String>[
-      'scale=$_width:$_height:force_original_aspect_ratio=decrease',
-      'pad=$_width:$_height:(ow-iw)/2:(oh-ih)/2',
-      'setsar=1',
-    ];
+    final filters = <String>[];
+    if (cropFill) {
+      final z = zoom.clamp(1.0, 4.0).toStringAsFixed(3);
+      final px = panX.clamp(-1.0, 1.0).toStringAsFixed(3);
+      final py = panY.clamp(-1.0, 1.0).toStringAsFixed(3);
+      filters.addAll([
+        'scale=$_width:$_height:force_original_aspect_ratio=increase',
+        'scale=trunc(iw*$z/2)*2:trunc(ih*$z/2)*2',
+        'crop=$_width:$_height:(iw-$_width)/2*(1+($px)):(ih-$_height)/2*(1+($py))',
+      ]);
+    } else {
+      filters.addAll([
+        'scale=$_width:$_height:force_original_aspect_ratio=decrease',
+        'pad=$_width:$_height:(ow-iw)/2:(oh-ih)/2',
+      ]);
+    }
+    filters.add('setsar=1');
     if (videoFilter != null) filters.add(videoFilter);
     filters.add('format=yuv420p');
     arguments.addAll([

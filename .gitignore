@@ -15,7 +15,8 @@
 .flutter-plugins-dependencies
 .packages
 .pub-cache/
-build/
+/build/*
+!/build/web/
 
 # Fichiers spécifiques à iOS
 ios/Pods/
