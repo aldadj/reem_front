@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -19,7 +20,7 @@ class ProfileScreen extends StatefulWidget {
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
+class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserver {
   final SessionManager _sessionManager = SessionManager();
   final UserService _userService = UserService();
 
@@ -31,20 +32,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _isFollowLoading = false;
   bool _pulseFollow = false;
   bool _showProfileUpdatedBanner = false;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadProfile();
+    // Sur son propre profil : rafraîchit en silence (nouveaux abonnés, likes...)
+    _refreshTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (mounted && _isOwnProfile && !_isLoading) _loadProfile(silent: true);
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted && !_isLoading) {
+      _loadProfile(silent: true);
+    }
   }
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
-  Future<void> _loadProfile() async {
-    setState(() => _isLoading = true);
+  Future<void> _loadProfile({bool silent = false}) async {
+    if (!silent) setState(() => _isLoading = true);
     final token = _sessionManager.authToken;
 
     final profile = await _userService.fetchProfile(widget.userId, token: token);
@@ -52,16 +68,95 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     if (!mounted) return;
     setState(() {
-      _profile = profile;
-      _videos = videos;
+      // En rafraîchissement silencieux, on garde l'ancien contenu si le réseau échoue
+      if (profile != null || !silent) _profile = profile;
+      if (profile != null || videos.isNotEmpty || !silent) _videos = videos;
+      _sortVideos();
       _isLoading = false;
     });
 
     if (_isOwnProfile) {
-      _loadLikedVideos();
+      _loadLikedVideos(silent: true);
     }
   }
 
+  bool _isPinned(dynamic video) {
+    if (video is! Map) return false;
+    return video['pinned_at'] != null || video['is_pinned'] == true;
+  }
+
+  // Vidéos épinglées en premier (la plus récemment épinglée d'abord)
+  void _sortVideos() {
+    final pinned = _videos.where(_isPinned).toList()
+      ..sort((a, b) => '${b['pinned_at']}'.compareTo('${a['pinned_at']}'));
+    final others = _videos.where((v) => !_isPinned(v)).toList();
+    _videos = [...pinned, ...others];
+  }
+
+  Future<void> _togglePin(Map<String, dynamic> video) async {
+    final token = _sessionManager.authToken;
+    if (token == null) return;
+
+    final result = await _userService.togglePin(video['id'] as int, token);
+    if (!mounted) return;
+
+    if (result['ok'] == true) {
+      final pinned = result['pinned'] == true;
+      setState(() {
+        video['is_pinned'] = pinned;
+        video['pinned_at'] =
+            pinned ? (result['pinned_at'] ?? DateTime.now().toIso8601String()) : null;
+        _sortVideos();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(pinned ? 'Vidéo épinglée' : 'Vidéo désépinglée'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${result['message']}'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  void _showVideoMenu(Map<String, dynamic> video) {
+    final pinned = _isPinned(video);
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF121B2D),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(pinned ? Icons.push_pin_outlined : Icons.push_pin, color: Colors.white),
+              title: Text(
+                pinned ? 'Désépingler' : 'Épingler en haut du profil',
+                style: const TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _togglePin(video);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.redAccent),
+              title: const Text('Supprimer', style: TextStyle(color: Colors.redAccent)),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _deleteVideo(video['id']);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   void _handleProfileUpdated(Map<String, dynamic> updatedUser) {
     _sessionManager.setUser(updatedUser);
@@ -87,8 +182,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Future<void> _loadLikedVideos() async {
-    setState(() => _isLoadingLikes = true);
+  Future<void> _loadLikedVideos({bool silent = false}) async {
+    if (!silent) setState(() => _isLoadingLikes = true);
     final token = _sessionManager.authToken;
     final likedVideos = await _userService.fetchLikedVideos(token: token);
 
@@ -276,13 +371,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  Widget _buildVideosGrid(List<dynamic> videos, {required String emptyMessage, bool showDeleteButton = false}) {
+  Widget _buildVideosGrid(List<dynamic> videos, {required String emptyMessage, bool showOwnerMenu = false}) {
     if (videos.isEmpty) {
-      return Center(
-        child: Text(
-          emptyMessage,
-          textAlign: TextAlign.center,
-          style: const TextStyle(color: Colors.grey),
+      return RefreshIndicator(
+        onRefresh: () => _loadProfile(silent: true),
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            const SizedBox(height: 100),
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  emptyMessage,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.grey),
+                ),
+              ),
+            ),
+          ],
         ),
       );
     }
@@ -294,103 +401,119 @@ class _ProfileScreenState extends State<ProfileScreen> {
             : constraints.maxWidth >= 760
                 ? 4
                 : 3;
-        return GridView.builder(
-      padding: const EdgeInsets.only(top: 8),
-      shrinkWrap: true,
-      physics: const AlwaysScrollableScrollPhysics(),
-      itemCount: videos.length,
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: columns,
-        crossAxisSpacing: 4,
-        mainAxisSpacing: 4,
-        childAspectRatio: 0.62,
-      ),
-      itemBuilder: (context, index) {
-        final video = videos[index] as Map<String, dynamic>;
-        final thumbnailUrl = _videoThumbnailUrl(video);
-        final String mediaUrl = _videoMediaUrl(video);
-        return GestureDetector(
-          onTap: mediaUrl.isEmpty
-              ? null
-              : () {
-                  final videoModel = _buildVideoModel(video);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => VideoPlayerItem(
-                        video: videoModel,
-                        feedVisible: ValueNotifier<bool>(true),
-                      ),
-                    ),
-                  );
-                },
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: Container(
-              decoration: BoxDecoration(
-                color: const Color(0xFF0F172A),
-              ),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Positioned.fill(child: _buildVideoThumbnail(thumbnailUrl, mediaUrl)),
-                  Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.bottomCenter,
-                        end: Alignment.center,
-                        colors: [Colors.black.withValues(alpha: 0.75), Colors.transparent],
-                      ),
-                    ),
-                  ),
-                  Center(
-                    child: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.black45,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.play_arrow, color: Colors.white, size: 28),
-                    ),
-                  ),
-                  if (showDeleteButton)
-                    Positioned(
-                      top: 6,
-                      right: 6,
-                      child: GestureDetector(
-                        onTap: () => _deleteVideo(video['id']),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.black54,
-                            borderRadius: BorderRadius.circular(10),
+        return RefreshIndicator(
+          onRefresh: () => _loadProfile(silent: true),
+          child: GridView.builder(
+            padding: const EdgeInsets.only(bottom: 24),
+            physics: const AlwaysScrollableScrollPhysics(),
+            itemCount: videos.length,
+            // Grandes vignettes pleine largeur façon TikTok, 3 par ligne
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              crossAxisSpacing: 2,
+              mainAxisSpacing: 2,
+              childAspectRatio: 0.7,
+            ),
+            itemBuilder: (context, index) {
+              final video = videos[index] as Map<String, dynamic>;
+              final thumbnailUrl = _videoThumbnailUrl(video);
+              final String mediaUrl = _videoMediaUrl(video);
+              final pinned = _isPinned(video);
+              return GestureDetector(
+                onTap: mediaUrl.isEmpty
+                    ? null
+                    : () {
+                        final videoModel = _buildVideoModel(video);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => VideoPlayerItem(
+                              video: videoModel,
+                              feedVisible: ValueNotifier<bool>(true),
+                            ),
                           ),
-                          padding: const EdgeInsets.all(6),
-                          child: const Icon(Icons.delete, color: Colors.redAccent, size: 18),
+                        );
+                      },
+                onLongPress: showOwnerMenu ? () => _showVideoMenu(video) : null,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Container(color: const Color(0xFF0F172A)),
+                    Positioned.fill(child: _buildVideoThumbnail(thumbnailUrl, mediaUrl)),
+                    // Dégradé bas pour lire le compteur
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      height: 56,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.bottomCenter,
+                            end: Alignment.topCenter,
+                            colors: [Colors.black.withValues(alpha: 0.65), Colors.transparent],
+                          ),
                         ),
                       ),
                     ),
-                  Positioned(
-                    right: 6,
-                    bottom: 6,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(12),
+                    if (pinned)
+                      Positioned(
+                        top: 6,
+                        left: 6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.redAccent,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.push_pin, color: Colors.white, size: 11),
+                              SizedBox(width: 3),
+                              Text('Épinglé',
+                                  style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
+                            ],
+                          ),
+                        ),
                       ),
-                      child: Text(
-                        '${video['likes_count'] ?? 0} ❤',
-                        style: const TextStyle(color: Colors.white, fontSize: 10),
+                    if (showOwnerMenu)
+                      Positioned(
+                        top: 2,
+                        right: 2,
+                        child: GestureDetector(
+                          onTap: () => _showVideoMenu(video),
+                          child: const Padding(
+                            padding: EdgeInsets.all(6),
+                            child: Icon(Icons.more_vert, color: Colors.white, size: 20),
+                          ),
+                        ),
+                      ),
+                    Positioned(
+                      left: 6,
+                      bottom: 6,
+                      child: Row(
+                        children: [
+                          const Icon(Icons.favorite, color: Colors.white, size: 14),
+                          const SizedBox(width: 3),
+                          Text(
+                            '${video['likes_count'] ?? 0}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              shadows: [Shadow(color: Colors.black54, blurRadius: 3)],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                ],
-              ),
-            ),
+                  ],
+                ),
+              );
+            },
           ),
         );
-      },
-    );
       },
     );
   }
@@ -421,11 +544,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ? const Center(child: Text('Impossible de charger le profil', style: TextStyle(color: Colors.white)))
               : DefaultTabController(
                   length: 2,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: SingleChildScrollView(
+                  child: NestedScrollView(
+                    headerSliverBuilder: (context, innerBoxIsScrolled) => [
+                      SliverToBoxAdapter(
+                        child: Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -618,6 +740,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ),
                         ),
                       ),
+                      SliverPersistentHeader(
+                        pinned: true,
+                        delegate: _ProfileTabsDelegate(
                       Container(
                         color: const Color(0xFF0B1020),
                         child: TabBar(
@@ -631,21 +756,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ],
                         ),
                       ),
-                      Expanded(
-                        child: TabBarView(
+                        ),
+                      ),
+                    ],
+                    body: TabBarView(
                           children: [
                             Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                              padding: EdgeInsets.zero,
                               child: _buildVideosGrid(
                                 _videos,
                                 emptyMessage: _isOwnProfile
                                     ? 'Vous n’avez pas encore publié de vidéos.'
                                     : 'Aucune vidéo trouvée.',
-                                showDeleteButton: _isOwnProfile,
+                                showOwnerMenu: _isOwnProfile,
                               ),
                             ),
                             Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                              padding: EdgeInsets.zero,
                               child: _isOwnProfile
                                   ? (_isLoadingLikes
                                       ? const Center(child: CircularProgressIndicator(color: Colors.white))
@@ -663,12 +790,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                           ],
                         ),
-                      ),
-                    ],
                   ),
                 ),
     );
   }
+}
+
+/// Colle la barre d'onglets (Publications / Aimés) en haut pendant le défilement.
+class _ProfileTabsDelegate extends SliverPersistentHeaderDelegate {
+  _ProfileTabsDelegate(this.child);
+
+  final Widget child;
+
+  @override
+  double get minExtent => 72;
+
+  @override
+  double get maxExtent => 72;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) => child;
+
+  @override
+  bool shouldRebuild(covariant _ProfileTabsDelegate oldDelegate) => true;
 }
 class EditProfileScreen extends StatefulWidget {
   final String initialName;

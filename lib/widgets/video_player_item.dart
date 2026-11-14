@@ -12,6 +12,7 @@ import 'package:http/http.dart' as http;
 import 'package:share_plus/share_plus.dart';
 import '../services/session_manager.dart';
 import '../services/auth_service.dart';
+import '../services/video_interaction_store.dart';
 import '../services/video_playback_coordinator.dart';
 import '../screens/auth_screen.dart';
 import '../screens/chat_screen.dart';
@@ -45,6 +46,11 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
   late final Player player;
   late final VideoController controller;
   final Object _playerId = Object();
+
+  // Sur le web, le mode muet automatique est géré dans web/index.html
+  // (voir le script d'autoplay) : ici on garde toujours le volume normal.
+  bool _userPaused = false; // l'utilisateur a mis cette vidéo en pause lui-même
+  double get _effectiveVolume => _volume;
 
   // État local pour TikTok feel
   bool _isLiked = false;
@@ -85,7 +91,12 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
       if (mounted) setState(() => _position = position);
     });
     _durationSubscription = player.stream.duration.listen((duration) {
-      if (mounted) setState(() => _duration = duration);
+      if (!mounted) return;
+      setState(() => _duration = duration);
+      // Filet de sécurité : la vidéo est chargée, elle doit jouer si elle est visible.
+      if (duration > Duration.zero && _shouldPlay && !_isPlaying && !_userPaused) {
+        _activatePlayback();
+      }
     });
     _playingSubscription = player.stream.playing.listen((playing) {
       if (mounted) setState(() => _isPlaying = playing);
@@ -100,6 +111,7 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
     _isFavorited = widget.video.isFavorited;
     _likesCount = widget.video.likesCount;
     _commentsCount = widget.video.commentsCount;
+    _applyStoredInteraction();
 
     _openVideo(widget.video.videoUrl);
 
@@ -130,6 +142,7 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
       _isFavorited = widget.video.isFavorited;
       _likesCount = widget.video.likesCount;
       _commentsCount = widget.video.commentsCount;
+      _applyStoredInteraction();
       _openVideo(widget.video.videoUrl);
     } else if (oldWidget.feedVisible != widget.feedVisible ||
         oldWidget.visibleVideoIndex != widget.visibleVideoIndex) {
@@ -141,19 +154,30 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
       (widget.visibleVideoIndex == null || widget.itemIndex == widget.visibleVideoIndex!.value);
 
   Future<void> _openVideo(String url) async {
-    await player.open(Media(url), play: false);
-    await player.setPlaylistMode(PlaylistMode.single);
-    await player.setVolume(_volume);
-    if (_shouldPlay) await _activatePlayback();
+    try {
+      await player.open(Media(url), play: false);
+      await player.setPlaylistMode(PlaylistMode.single);
+      await player.setVolume(_effectiveVolume);
+    } catch (e) {
+      debugPrint('[Reem autoplay] ouverture impossible ($url) : $e');
+      return;
+    }
+    if (!mounted) return;
+    if (_shouldPlay && !_userPaused) await _activatePlayback();
   }
 
-  Future<void> _activatePlayback() => VideoPlaybackCoordinator.activate(_playerId, player.play);
+  Future<void> _activatePlayback() => VideoPlaybackCoordinator.activate(_playerId, () async {
+        await player.setVolume(_effectiveVolume);
+        await player.play();
+      });
 
   Future<void> _togglePlayback() async {
     if (_isPlaying) {
+      _userPaused = true;
       await player.pause();
       await VideoPlaybackCoordinator.deactivate(_playerId);
     } else {
+      _userPaused = false;
       await _activatePlayback();
     }
   }
@@ -164,7 +188,7 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
       player.pause();
     } else if (state == AppLifecycleState.resumed) {
-      if (_shouldPlay) {
+      if (_shouldPlay && !_userPaused) {
         _activatePlayback();
       } else {
         player.pause();
@@ -175,8 +199,9 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
   void _handleFeedVisibleChanged() {
     if (!mounted) return;
     if (_shouldPlay) {
-      _activatePlayback();
+      if (!_userPaused) _activatePlayback();
     } else {
+      _userPaused = false; // quand on revient sur cette vidéo, elle repart seule
       player.pause().then((_) => VideoPlaybackCoordinator.deactivate(_playerId));
     }
   }
@@ -423,39 +448,76 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
     );
   }
 
+  // Reprend la dernière valeur connue (like / favori / compteur) de cette vidéo
+  void _applyStoredInteraction() {
+    final stored = VideoInteractionStore.read(widget.video.id);
+    if (stored == null) return;
+    _isLiked = stored.liked;
+    _isFavorited = stored.favorited;
+    _likesCount = stored.likesCount;
+  }
+
+  void _saveInteraction(int videoId) {
+    VideoInteractionStore.write(
+      videoId,
+      liked: _isLiked,
+      favorited: _isFavorited,
+      likesCount: _likesCount,
+    );
+  }
+
   Future<void> _toggleLike() async {
     if (!_sessionManager.isAuthenticated) {
       _goToAuth();
       return;
     }
 
-    setState(() {
+    final videoId = widget.video.id;
+    void flip() {
       _isLiked = !_isLiked;
-      _isLiked ? _likesCount++ : _likesCount--;
-    });
+      _likesCount += _isLiked ? 1 : -1;
+      if (_likesCount < 0) _likesCount = 0;
+    }
 
+    setState(flip);
+    _saveInteraction(videoId);
+
+    var success = false;
     try {
       final response = await http.post(
-        Uri.parse("${AuthService.baseUrl}/videos/${widget.video.id}/like"),
+        Uri.parse("${AuthService.baseUrl}/videos/$videoId/like"),
         headers: {
           'Authorization': 'Bearer ${_sessionManager.authToken}',
           'Accept': 'application/json',
         },
       );
-      if (response.statusCode != 200) {
-        // Rollback si erreur serveur
-        setState(() {
-          _isLiked = !_isLiked;
-          _isLiked ? _likesCount++ : _likesCount--;
-        });
+      success = response.statusCode == 200;
+      if (success) {
+        try {
+          final data = jsonDecode(response.body);
+          if (data is Map) {
+            // On se cale sur la réponse du serveur
+            if (data['liked'] != null) _isLiked = data['liked'] == true;
+            if (data['likes_count'] is num) {
+              _likesCount = (data['likes_count'] as num).toInt();
+            }
+            if (mounted) setState(() {});
+            _saveInteraction(videoId);
+          }
+        } catch (_) {}
       }
     } catch (e) {
-      // En cas d'erreur réseau, on annule aussi l'action
-      setState(() {
-        _isLiked = !_isLiked;
-        _isLiked ? _likesCount++ : _likesCount--;
-      });
-      print("Erreur Like: $e");
+      debugPrint('Erreur Like: $e');
+    }
+
+    if (!success) {
+      // Rollback si erreur serveur / réseau
+      if (mounted) {
+        setState(flip);
+      } else {
+        flip();
+      }
+      _saveInteraction(videoId);
     }
   }
 
@@ -465,23 +527,41 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
       return;
     }
 
+    final videoId = widget.video.id;
     setState(() => _isFavorited = !_isFavorited);
+    _saveInteraction(videoId);
 
+    var success = false;
     try {
       final response = await http.post(
-        Uri.parse("${AuthService.baseUrl}/videos/${widget.video.id}/favorite"),
+        Uri.parse("${AuthService.baseUrl}/videos/$videoId/favorite"),
         headers: {
           'Authorization': 'Bearer ${_sessionManager.authToken}',
           'Accept': 'application/json',
         },
       );
-
-      if (response.statusCode != 200) {
-        setState(() => _isFavorited = !_isFavorited);
+      success = response.statusCode == 200;
+      if (success) {
+        try {
+          final data = jsonDecode(response.body);
+          if (data is Map && data['favorited'] != null) {
+            _isFavorited = data['favorited'] == true;
+            if (mounted) setState(() {});
+            _saveInteraction(videoId);
+          }
+        } catch (_) {}
       }
     } catch (e) {
-      print("Erreur Favoris: $e");
-      setState(() => _isFavorited = !_isFavorited);
+      debugPrint("Erreur Favoris: $e");
+    }
+
+    if (!success) {
+      if (mounted) {
+        setState(() => _isFavorited = !_isFavorited);
+      } else {
+        _isFavorited = !_isFavorited;
+      }
+      _saveInteraction(videoId);
     }
   }
 
