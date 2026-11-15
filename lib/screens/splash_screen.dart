@@ -108,15 +108,6 @@ class _SplashScreenState extends State<SplashScreen>
                       ),
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  const Text(
-                    'Crée. Partage. Inspire.',
-                    style: TextStyle(
-                      color: ReemColors.textSecondary,
-                      fontSize: 14,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
                   const SizedBox(height: 34),
                   SizedBox(
                     width: 110,
