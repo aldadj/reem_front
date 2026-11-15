@@ -1,0 +1,59 @@
+<!-- À coller dans reem_front/web/index.html, juste avant </head>.
+     Si tu as déjà collé la version précédente, REMPLACE-la par celle-ci. -->
+<script>
+  // Reem : lecture automatique des vidéos sur le web (ordinateur ET téléphone).
+  // 1) On essaie de lancer la vidéo normalement.
+  // 2) Si le navigateur refuse (NotAllowedError), on la relance en muet.
+  // 3) Au premier clic / toucher, on remet le son.
+  (function () {
+    var mutedByUs = [];
+    var nativePlay = HTMLMediaElement.prototype.play;
+
+    function track(el) {
+      if (mutedByUs.indexOf(el) === -1) mutedByUs.push(el);
+    }
+
+    function prepare(el) {
+      // Obligatoire sur iPhone : sans "playsinline", la vidéo ne démarre pas seule.
+      try {
+        el.playsInline = true;
+        el.setAttribute('playsinline', '');
+        el.setAttribute('webkit-playsinline', '');
+      } catch (e) {}
+      // Pas encore de toucher sur la page : on démarre directement en muet.
+      var active = navigator.userActivation && navigator.userActivation.hasBeenActive;
+      if (!active && !el.muted) {
+        el.muted = true;
+        track(el);
+      }
+    }
+
+    HTMLMediaElement.prototype.play = function () {
+      var el = this;
+      var args = arguments;
+      prepare(el);
+      var result = nativePlay.apply(el, args);
+      if (result && typeof result.catch === 'function') {
+        return result.catch(function (error) {
+          if (error && error.name === 'NotAllowedError' && !el.muted) {
+            el.muted = true;
+            track(el);
+            return nativePlay.apply(el, args);
+          }
+          throw error;
+        });
+      }
+      return result;
+    };
+
+    function unmute() {
+      mutedByUs.forEach(function (el) {
+        try { el.muted = false; } catch (e) {}
+      });
+      mutedByUs = [];
+    }
+    ['pointerup', 'touchend', 'mouseup', 'click', 'keydown'].forEach(function (type) {
+      window.addEventListener(type, unmute, true);
+    });
+  })();
+</script>
