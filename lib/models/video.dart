@@ -1,4 +1,5 @@
-import 'dart:io';
+import '../services/auth_service.dart';
+import '../utils/platform_helper.dart';
 
 class Video {
   final int id;
@@ -30,11 +31,11 @@ class Video {
   // Convertit le JSON de Laravel en objet Dart
   factory Video.fromJson(Map<String, dynamic> json) {
     String url = json['video_url'] ?? json['video_path'] ?? '';
-    if (url.contains('localhost') || url.contains('127.0.0.1')) {
+    if (isAndroidPlatform && (url.contains('localhost') || url.contains('127.0.0.1'))) {
       url = url.replaceAll('localhost', '10.0.2.2').replaceAll('127.0.0.1', '10.0.2.2');
     }
     if (url.isNotEmpty && !url.startsWith('http')) {
-      final host = Platform.isAndroid ? 'http://10.0.2.2:8000' : 'http://127.0.0.1:8000';
+      final host = AuthService.baseUrl.replaceFirst(RegExp(r'/api$'), '');
       url = '$host${url.startsWith('/') ? '' : '/'}$url';
     }
 

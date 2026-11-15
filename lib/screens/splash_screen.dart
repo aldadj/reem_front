@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+
 import '../services/session_manager.dart';
+import '../theme/reem_theme.dart';
 import 'feed_screen.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -9,66 +11,126 @@ class SplashScreen extends StatefulWidget {
   State<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen> {
+class _SplashScreenState extends State<SplashScreen>
+    with SingleTickerProviderStateMixin {
+  // ignore: unused_field
   final SessionManager _sessionManager = SessionManager();
+  late final AnimationController _controller;
+  late final Animation<double> _fade;
+  late final Animation<double> _scale;
 
   @override
   void initState() {
     super.initState();
-    _checkAuthentication();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..forward();
+    _fade = CurvedAnimation(parent: _controller, curve: Curves.easeOut);
+    _scale = Tween<double>(begin: 0.82, end: 1).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOutBack),
+    );
+    _goToFeed();
   }
 
-  Future<void> _checkAuthentication() async {
-    // Simule un délai pour afficher le splash screen
-    await Future.delayed(const Duration(seconds: 2));
-
+  Future<void> _goToFeed() async {
+    await Future.delayed(const Duration(milliseconds: 1900));
     if (!mounted) return;
 
-    // On redirige maintenant tout le monde vers le FeedScreen par défaut
-    // Le SessionManager gardera l'état (connecté ou invité)
+    // Tout le monde arrive sur le fil ; la session (connecté ou invité) est gardée.
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const FeedScreen()),
+      PageRouteBuilder(
+        transitionDuration: const Duration(milliseconds: 450),
+        pageBuilder: (_, __, ___) => const FeedScreen(),
+        transitionsBuilder: (_, animation, __, child) =>
+            FadeTransition(opacity: animation, child: child),
+      ),
     );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0B1A2E),
+      backgroundColor: ReemColors.background,
       body: Container(
         decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF0B1A2E), Color(0xFF111F34)],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
+          gradient: RadialGradient(
+            center: Alignment(0, -0.35),
+            radius: 1.1,
+            colors: [Color(0xFF1B2547), ReemColors.background],
           ),
         ),
         child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Text(
-                'REEM',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 56,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 2.4,
-                ),
+          child: FadeTransition(
+            opacity: _fade,
+            child: ScaleTransition(
+              scale: _scale,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 92,
+                    height: 92,
+                    decoration: BoxDecoration(
+                      gradient: ReemColors.gradient,
+                      borderRadius: BorderRadius.circular(28),
+                      boxShadow: [
+                        BoxShadow(
+                          color: ReemColors.accent.withValues(alpha: 0.45),
+                          blurRadius: 36,
+                          spreadRadius: 2,
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.play_arrow_rounded,
+                      color: Colors.white,
+                      size: 58,
+                    ),
+                  ),
+                  const SizedBox(height: 26),
+                  ShaderMask(
+                    shaderCallback: (rect) =>
+                        ReemColors.gradient.createShader(rect),
+                    child: const Text(
+                      'REEM',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 46,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 6,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Crée. Partage. Inspire.',
+                    style: TextStyle(
+                      color: ReemColors.textSecondary,
+                      fontSize: 14,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 34),
+                  SizedBox(
+                    width: 110,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: const LinearProgressIndicator(
+                        minHeight: 3,
+                        backgroundColor: Colors.white12,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 24),
-              const CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation(Color(0xFF7C4DFF)),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Une expérience plus calme et élégante',
-                style: TextStyle(
-                  color: Colors.white70,
-                  fontSize: 14,
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),

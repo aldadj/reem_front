@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../utils/platform_helper.dart';
+import '../theme/reem_theme.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:media_kit/media_kit.dart';
@@ -28,6 +30,10 @@ class VideoPlayerItem extends StatefulWidget {
   final VoidCallback? onAutoNext;
   final bool showBackButton;
 
+  /// Ouvre directement les commentaires (depuis une notification)
+  final bool openCommentsOnStart;
+  final int? highlightCommentId;
+
   const VideoPlayerItem({
     Key? key,
     required this.video,
@@ -36,6 +42,8 @@ class VideoPlayerItem extends StatefulWidget {
     this.itemIndex,
     this.onAutoNext,
     this.showBackButton = true,
+    this.openCommentsOnStart = false,
+    this.highlightCommentId,
   }) : super(key: key);
 
   @override
@@ -80,6 +88,7 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
   @override
   void initState() {
     super.initState();
+    _showCommentsPanel = widget.openCommentsOnStart;
     WidgetsBinding.instance.addObserver(this);
     player = Player();
     controller = VideoController(player);
@@ -625,11 +634,11 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
 
                           // Mapping de l'URL pour l'émulateur Android et le domaine local
                           if (photoPath != null) {
-                            if (Platform.isAndroid && (photoPath.contains('localhost') || photoPath.contains('127.0.0.1'))) {
+                            if (isAndroidPlatform && (photoPath.contains('localhost') || photoPath.contains('127.0.0.1'))) {
                               photoPath = photoPath.replaceAll('localhost', '10.0.2.2').replaceAll('127.0.0.1', '10.0.2.2');
                             }
                             if (!photoPath.startsWith('http')) {
-                              final domain = Platform.isAndroid ? "http://10.0.2.2:8000" : "http://127.0.0.1:8000";
+                              final domain = AuthService.baseUrl.replaceFirst(RegExp(r'/api$'), '');
                               photoPath = domain + (photoPath.startsWith('/') ? '' : '/') + photoPath;
                             }
                           }
@@ -1005,6 +1014,7 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
           final isTabletOrDesktop = constraints.maxWidth >= 768;
           final commentsPanel = VideoCommentsPanel(
             videoId: widget.video.id,
+            highlightCommentId: widget.highlightCommentId,
             onClose: _toggleCommentsPanel,
             onCountChanged: (count) {
               if (mounted && count != _commentsCount) setState(() => _commentsCount = count);
@@ -1090,53 +1100,101 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
               ),
             ),
           ),
+        // Dégradé bas : texte lisible sans boîte noire
         Positioned(
-          left: 14,
-          bottom: 14,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.62),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: 300,
+          child: IgnorePointer(
+            child: DecoratedBox(
               decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.38),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  GestureDetector(
-                    onTap: _openProfile,
-                    child: Text('@${widget.video.username}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(widget.video.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white)),
-                  if (widget.video.description != null)
-                    Text(widget.video.description!, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                ],
+                gradient: LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.topCenter,
+                  colors: [Colors.black.withValues(alpha: 0.75), Colors.transparent],
+                ),
               ),
             ),
           ),
         ),
         Positioned(
-          right: 8,
-          bottom: 12,
+          left: 16,
+          bottom: 20,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.66),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                GestureDetector(
+                  onTap: _openProfile,
+                  child: Text(
+                    '@${widget.video.username}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                      shadows: reemTextShadow,
+                    ),
+                  ),
+                ),
+                if (widget.video.title.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    widget.video.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontSize: 14.5, height: 1.3, shadows: reemTextShadow),
+                  ),
+                ],
+                if (widget.video.description != null &&
+                    widget.video.description!.isNotEmpty &&
+                    widget.video.description != widget.video.title) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    widget.video.description!,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.3, shadows: reemTextShadow),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        Positioned(
+          right: 10,
+          bottom: 20,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              GestureDetector(
-                onTap: _openProfile,
-                child: const CircleAvatar(
-                  radius: 21,
-                  backgroundColor: Colors.white,
-                  child: CircleAvatar(radius: 19, backgroundColor: Colors.grey, child: Icon(Icons.person, color: Colors.white, size: 20)),
-                ),
+              _buildAuthorAvatar(),
+              const SizedBox(height: 16),
+              _buildActionButton(
+                _isLiked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                _formatCount(_likesCount),
+                _isLiked ? ReemColors.like : Colors.white,
+                onTap: _toggleLike,
               ),
-              const SizedBox(height: 10),
-              _buildActionButton(_isLiked ? Icons.favorite : Icons.favorite_border, _formatCount(_likesCount), _isLiked ? Colors.red : Colors.white, onTap: _toggleLike),
-              _buildActionButton(Icons.comment, _formatCount(_commentsCount), Colors.white, onTap: _toggleCommentsPanel),
-              _buildActionButton(_isFavorited ? Icons.bookmark : Icons.bookmark_border, 'Favoris', _isFavorited ? Colors.yellow : Colors.white, onTap: _toggleFavorite),
-              _buildActionButton(Icons.share, 'Partager', Colors.white, onTap: _shareVideo),
+              _buildActionButton(
+                Icons.chat_bubble_rounded,
+                _formatCount(_commentsCount),
+                Colors.white,
+                onTap: _toggleCommentsPanel,
+              ),
+              _buildActionButton(
+                _isFavorited ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
+                'Favoris',
+                _isFavorited ? ReemColors.gold : Colors.white,
+                onTap: _toggleFavorite,
+              ),
+              _buildActionButton(
+                Icons.share_rounded,
+                'Partager',
+                Colors.white,
+                onTap: _shareVideo,
+              ),
             ],
           ),
         ),
@@ -1144,16 +1202,53 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
     );
   }
 
+  Widget _buildAuthorAvatar() {
+    var photo = widget.video.authorProfilePhotoUrl;
+    if (photo != null && photo.isNotEmpty && !photo.startsWith('http')) {
+      final base = AuthService.baseUrl.replaceFirst(RegExp(r'/api$'), '');
+      photo = '$base${photo.startsWith('/') ? '' : '/'}$photo';
+    }
+    final hasPhoto = photo != null && photo.startsWith('http');
+    final initial = widget.video.username.isNotEmpty ? widget.video.username[0].toUpperCase() : '?';
+    return GestureDetector(
+      onTap: _openProfile,
+      child: Container(
+        padding: const EdgeInsets.all(2),
+        decoration: const BoxDecoration(shape: BoxShape.circle, gradient: ReemColors.gradient),
+        child: CircleAvatar(
+          radius: 22,
+          backgroundColor: ReemColors.surfaceHigh,
+          backgroundImage: hasPhoto ? NetworkImage(photo!) : null,
+          child: hasPhoto
+              ? null
+              : Text(initial, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18)),
+        ),
+      ),
+    );
+  }
+
   Widget _buildActionButton(IconData icon, String label, Color color, {required VoidCallback onTap}) {
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+        padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 6),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: color, size: 28),
-            const SizedBox(height: 6),
-            Text(label, style: const TextStyle(color: Colors.white, fontSize: 12)),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 240),
+              transitionBuilder: (child, animation) => ScaleTransition(
+                scale: CurvedAnimation(parent: animation, curve: Curves.elasticOut),
+                child: child,
+              ),
+              child: Icon(icon, key: ValueKey('$icon-${color.toARGB32()}'), color: color, size: 34, shadows: reemTextShadow),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              label,
+              style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600, shadows: reemTextShadow),
+            ),
           ],
         ),
       ),

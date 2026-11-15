@@ -2,6 +2,15 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import '../utils/platform_helper.dart';
+import '../theme/reem_theme.dart';
+import 'chat_screen.dart';
+import 'edit_profile_screen.dart';
+import 'package:file_picker/file_picker.dart';
+import '../services/account_service.dart';
+import '../widgets/account_dialogs.dart';
+import '../utils/media_url.dart';
+import 'auth_screen.dart';
 // import 'package:image_picker/image_picker.dart'; // Commenté pour désactiver la sélection d'image
 import '../models/video.dart' as app_models;
 import '../services/auth_service.dart';
@@ -14,7 +23,18 @@ import '../screens/auth_screen.dart';
 class ProfileScreen extends StatefulWidget {
   final int userId;
 
-  const ProfileScreen({super.key, required this.userId});
+  /// true quand l'écran est l'onglet Profil de la navigation (sans barre du haut)
+  final bool embedded;
+
+  /// Déconnexion (proposée dans le menu de son propre profil)
+  final VoidCallback? onLogout;
+
+  const ProfileScreen({
+    super.key,
+    required this.userId,
+    this.embedded = false,
+    this.onLogout,
+  });
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -33,6 +53,7 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
   bool _pulseFollow = false;
   bool _showProfileUpdatedBanner = false;
   Timer? _refreshTimer;
+  bool _uploadingPhoto = false;
 
   @override
   void initState() {
@@ -161,7 +182,7 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
   void _handleProfileUpdated(Map<String, dynamic> updatedUser) {
     _sessionManager.setUser(updatedUser);
     setState(() {
-      _profile = updatedUser;
+      _profile = {...?_profile, ...updatedUser};
       _showProfileUpdatedBanner = true;
     });
     Future.delayed(const Duration(seconds: 3), () {
@@ -175,7 +196,10 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
       MaterialPageRoute(
         builder: (_) => EditProfileScreen(
           initialName: _profile?['name']?.toString() ?? '',
-          initialPhotoUrl: _convertPhotoUrl(_profile?['profile_photo_path']),
+          initialUsername: _profile?['username']?.toString() ?? '',
+          initialBio: _profile?['bio']?.toString() ?? '',
+          initialWebsite: _profile?['website']?.toString() ?? '',
+          initialPhotoUrl: _profile?['profile_photo_path']?.toString(),
           onProfileUpdated: _handleProfileUpdated,
         ),
       ),
@@ -237,17 +261,19 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
 
   String? _convertPhotoUrl(String? photoPath) {
     if (photoPath == null) return null;
-    if (Platform.isAndroid && (photoPath.contains('localhost') || photoPath.contains('127.0.0.1'))) {
+    if (isAndroidPlatform && (photoPath.contains('localhost') || photoPath.contains('127.0.0.1'))) {
       photoPath = photoPath.replaceAll('localhost', '10.0.2.2').replaceAll('127.0.0.1', '10.0.2.2');
     }
     if (!photoPath.startsWith('http')) {
-      final domain = Platform.isAndroid ? 'http://10.0.2.2:8000' : 'http://127.0.0.1:8000';
+      final domain = AuthService.baseUrl.replaceFirst(RegExp(r'/api$'), '');
       photoPath = domain + (photoPath.startsWith('/') ? '' : '/') + photoPath;
     }
     return photoPath;
   }
 
   String _profileHandle() {
+    final username = _profile?['username']?.toString().trim();
+    if (username != null && username.isNotEmpty) return '@$username';
     final name = _profile?['name']?.toString().trim() ?? 'utilisateur';
     final handle = name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9_]'), '');
     return '@${handle.isEmpty ? 'utilisateur' : handle}';
@@ -266,23 +292,275 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
     return currentUserId != null && currentUserId == widget.userId;
   }
 
+  String _compact(dynamic raw) {
+    final value = raw is num ? raw.toInt() : int.tryParse('$raw') ?? 0;
+    if (value >= 1000000) return '${(value / 1000000).toStringAsFixed(value >= 10000000 ? 0 : 1)} M';
+    if (value >= 10000) return '${(value / 1000).toStringAsFixed(value >= 100000 ? 0 : 1)} k';
+    return '$value';
+  }
+
   Widget _buildStatColumn(String value, String label) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Text(
-          value,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
+    return SizedBox(
+      width: 96,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(
+            value,
+            style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 3),
+          Text(label, style: const TextStyle(color: ReemColors.textMuted, fontSize: 12.5)),
+        ],
+      ),
+    );
+  }
+
+  Widget _statDivider() => Container(width: 1, height: 22, color: Colors.white12);
+
+  void _showProfileMenu() {
+    Widget item(IconData icon, String label, VoidCallback onTap, {Color color = Colors.white}) {
+      return ListTile(
+        leading: Icon(icon, color: color),
+        title: Text(label, style: TextStyle(color: color)),
+        onTap: () {
+          Navigator.pop(context);
+          onTap();
+        },
+      );
+    }
+
+    showModalBottomSheet(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              item(Icons.edit_outlined, 'Modifier le profil', _openEditProfileSheet),
+              item(Icons.camera_alt_outlined, 'Changer la photo de profil', _changePhotoQuick),
+              item(Icons.lock_reset_rounded, 'Changer le mot de passe', () => showChangePasswordDialog(context)),
+              item(Icons.refresh_rounded, 'Actualiser', () => _loadProfile(silent: true)),
+              if (widget.onLogout != null)
+                item(Icons.logout_rounded, 'Déconnexion', widget.onLogout!),
+              const Divider(),
+              item(Icons.delete_forever_rounded, 'Supprimer mon compte', () => showDeleteAccountDialog(context), color: ReemColors.like),
+              const SizedBox(height: 8),
+            ],
           ),
         ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: const TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+    );
+  }
+
+  void _openMessage() {
+    if (!_sessionManager.isAuthenticated) {
+      Navigator.push(context, MaterialPageRoute(builder: (_) => const AuthScreen()));
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChatScreen(
+          otherUserId: widget.userId,
+          otherUserName: _profile?['name']?.toString() ?? 'Utilisateur',
         ),
+      ),
+    );
+  }
+
+  // Appui sur la photo de son propre profil : choisir et envoyer une nouvelle photo
+  Future<void> _changePhotoQuick() async {
+    if (!_isOwnProfile || _uploadingPhoto) return;
+    final result = await FilePicker.platform.pickFiles(type: FileType.image, withData: true);
+    if (result == null || result.files.isEmpty) return;
+    final file = result.files.first;
+    if (file.bytes == null) return;
+    if (file.size > 5 * 1024 * 1024) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('La photo est trop lourde (5 Mo maximum).')),
+      );
+      return;
+    }
+
+    setState(() => _uploadingPhoto = true);
+    try {
+      final user = await AccountService().uploadPhoto(file.bytes!, file.name);
+      if (!mounted) return;
+      setState(() => _profile = {...?_profile, ...user});
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Photo de profil mise à jour.')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _uploadingPhoto = false);
+    }
+  }
+
+  Widget _buildProfileHeader() {
+    final String displayName = _profile?['name']?.toString() ?? 'Utilisateur';
+    final String? photo = _convertPhotoUrl(_profile?['profile_photo_path']);
+    final bool isFollowing = _profile?['is_following'] == true;
+    final String bio = _profileBio();
+
+    return Column(
+      children: [
+        if (_isOwnProfile)
+          Align(
+            alignment: Alignment.centerRight,
+            child: IconButton(
+              tooltip: 'Menu',
+              icon: const Icon(Icons.menu_rounded, color: Colors.white, size: 28),
+              onPressed: _showProfileMenu,
+            ),
+          )
+        else
+          const SizedBox(height: 8),
+        GestureDetector(
+          onTap: _isOwnProfile ? _changePhotoQuick : null,
+          child: Stack(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(3),
+                decoration: const BoxDecoration(shape: BoxShape.circle, gradient: ReemColors.gradient),
+                child: CircleAvatar(
+                  radius: 50,
+                  backgroundColor: ReemColors.surfaceHigh,
+                  backgroundImage: absoluteMediaUrl(photo) != null ? NetworkImage(absoluteMediaUrl(photo)!) : null,
+                  child: absoluteMediaUrl(photo) == null
+                      ? const Icon(Icons.person_rounded, color: Colors.white70, size: 48)
+                      : null,
+                ),
+              ),
+              if (_uploadingPhoto)
+                const Positioned.fill(
+                  child: ClipOval(
+                    child: ColoredBox(
+                      color: Colors.black54,
+                      child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)),
+                    ),
+                  ),
+                ),
+              if (_isOwnProfile && !_uploadingPhoto)
+                Positioned(
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    padding: const EdgeInsets.all(7),
+                    decoration: BoxDecoration(
+                      color: ReemColors.primary,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: ReemColors.background, width: 3),
+                    ),
+                    child: const Icon(Icons.camera_alt_rounded, color: Colors.white, size: 16),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          displayName,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          _profileHandle(),
+          style: const TextStyle(color: ReemColors.textMuted, fontSize: 13.5),
+        ),
+        const SizedBox(height: 20),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _buildStatColumn(_compact(_profile?['following_count']), 'Suivis'),
+            _statDivider(),
+            _buildStatColumn(_compact(_profile?['followers_count']), 'Abonnés'),
+            _statDivider(),
+            _buildStatColumn(_compact(_profile?['total_likes_count']), 'J’aime'),
+          ],
+        ),
+        const SizedBox(height: 18),
+        if (_isOwnProfile)
+          SizedBox(
+            width: 240,
+            child: ElevatedButton.icon(
+              onPressed: _openEditProfileSheet,
+              icon: const Icon(Icons.edit_outlined, size: 18),
+              label: const Text('Modifier le profil'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white.withValues(alpha: 0.1),
+              ),
+            ),
+          )
+        else
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              AnimatedScale(
+                scale: _pulseFollow ? 1.06 : 1.0,
+                duration: const Duration(milliseconds: 180),
+                child: SizedBox(
+                  width: 190,
+                  child: ElevatedButton.icon(
+                    onPressed: _isFollowLoading ? null : _toggleFollow,
+                    icon: _isFollowLoading
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : Icon(isFollowing ? Icons.check_rounded : Icons.person_add_alt_1_rounded, size: 19),
+                    label: Text(isFollowing ? 'Abonné(e)' : 'S’abonner'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: isFollowing ? Colors.white.withValues(alpha: 0.12) : ReemColors.primary,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Material(
+                color: Colors.white.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(14),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: _openMessage,
+                  child: const Padding(
+                    padding: EdgeInsets.all(13),
+                    child: Icon(Icons.send_rounded, color: Colors.white, size: 20),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        if (bio.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+            child: Text(
+              bio,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: ReemColors.textSecondary, fontSize: 14, height: 1.4),
+            ),
+          ),
+        if (_showProfileUpdatedBanner)
+          Padding(
+            padding: const EdgeInsets.only(top: 14),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1F9D63).withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.check_circle_rounded, color: Color(0xFF3DDC97), size: 18),
+                  SizedBox(width: 8),
+                  Text('Profil mis à jour', style: TextStyle(color: Color(0xFF3DDC97), fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
+          ),
+        const SizedBox(height: 10),
       ],
     );
   }
@@ -520,13 +798,9 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
 
   @override
   Widget build(BuildContext context) {
-    final displayName = _profile?['name'] ?? 'Utilisateur';
-    final displayHandle = _profileHandle();
-    final bioText = _profileBio();
-
     return Scaffold(
-      backgroundColor: const Color(0xFF0B1020),
-      appBar: AppBar(
+      backgroundColor: ReemColors.background,
+      appBar: widget.embedded ? null : AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         title: const Text('Profil', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, letterSpacing: 0.2)),
@@ -534,11 +808,11 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
         actions: [
           IconButton(
             icon: const Icon(Icons.more_horiz, color: Colors.white70),
-            onPressed: () {},
+            onPressed: _isOwnProfile ? _showProfileMenu : null,
           ),
         ],
       ),
-      body: _isLoading
+      body: _wideCenter(_isLoading
           ? const Center(child: CircularProgressIndicator(color: Colors.white))
           : _profile == null
               ? const Center(child: Text('Impossible de charger le profil', style: TextStyle(color: Colors.white)))
@@ -548,211 +822,25 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
                     headerSliverBuilder: (context, innerBoxIsScrolled) => [
                       SliverToBoxAdapter(
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF121B2D),
-                                  borderRadius: BorderRadius.circular(24),
-                                  border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
-                                ),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  children: [
-                                    CircleAvatar(
-                                      radius: 46,
-                                      backgroundColor: const Color(0xFF1D2742),
-                                      backgroundImage: _convertPhotoUrl(_profile?['profile_photo_path']) != null
-                                          ? NetworkImage(_convertPhotoUrl(_profile?['profile_photo_path'])!)
-                                          : null,
-                                      child: _convertPhotoUrl(_profile?['profile_photo_path']) == null
-                                          ? const Icon(Icons.person, color: Colors.white, size: 42)
-                                          : null,
-                                    ),
-                                    const SizedBox(width: 16),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(displayName, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700)),
-                                          const SizedBox(height: 6),
-                                          Text(displayHandle, style: const TextStyle(color: Colors.white54, fontSize: 13)),
-                                          const SizedBox(height: 14),
-                                          Row(
-                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                            children: [
-                                              _buildStatColumn('${_profile?['videos_count'] ?? 0}', 'Vidéos'),
-                                              _buildStatColumn('${_profile?['followers_count'] ?? 0}', 'Abonnés'),
-                                              _buildStatColumn('${_profile?['following_count'] ?? 0}', 'Suivis'),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 18),
-                              Text(bioText, style: const TextStyle(color: Colors.white70, fontSize: 14, height: 1.5)),
-                              const SizedBox(height: 20),
-                              Row(
-                                mainAxisAlignment: _isOwnProfile ? MainAxisAlignment.start : MainAxisAlignment.center,
-                                children: [
-                                  if (_isOwnProfile)
-                                    Expanded(
-                                      child: ElevatedButton(
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: const Color(0xFF7C9BFF),
-                                          foregroundColor: Colors.white,
-                                          padding: const EdgeInsets.symmetric(vertical: 14),
-                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                                        ),
-                                        onPressed: _openEditProfileSheet,
-                                        child: const Text('Modifier le profil', style: TextStyle(fontWeight: FontWeight.bold)),
-                                      ),
-                                    )
-                                  else
-                                    Tooltip(
-                                      message: _profile?['is_following'] == true ? 'Se désabonner' : 'S’abonner',
-                                      child: InkWell(
-                                        onTap: _isFollowLoading ? null : _toggleFollow,
-                                        customBorder: const CircleBorder(),
-                                        child: AnimatedScale(
-                                          scale: _pulseFollow ? 1.12 : 1.0,
-                                          duration: const Duration(milliseconds: 200),
-                                          child: Container(
-                                            width: 46,
-                                            height: 46,
-                                            decoration: BoxDecoration(
-                                              color: _profile?['is_following'] == true ? Colors.white : Colors.redAccent,
-                                              shape: BoxShape.circle,
-                                            ),
-                                            alignment: Alignment.center,
-                                            child: _isFollowLoading
-                                                ? SizedBox(
-                                                    width: 20,
-                                                    height: 20,
-                                                    child: CircularProgressIndicator(
-                                                      color: _profile?['is_following'] == true ? Colors.redAccent : Colors.white,
-                                                      strokeWidth: 2,
-                                                    ),
-                                                  )
-                                                : Icon(
-                                                    _profile?['is_following'] == true ? Icons.check : Icons.add,
-                                                    color: _profile?['is_following'] == true ? Colors.redAccent : Colors.white,
-                                                    size: 27,
-                                                  ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  if (!_isOwnProfile) ...[
-                                    const SizedBox(width: 12),
-                                    Container(
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFF121B2D),
-                                        borderRadius: BorderRadius.circular(14),
-                                        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-                                      ),
-                                      child: IconButton(
-                                        onPressed: () {},
-                                        icon: const Icon(Icons.send, color: Colors.white),
-                                      ),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                              if (_showProfileUpdatedBanner)
-                                Padding(
-                                  padding: const EdgeInsets.only(bottom: 12, top: 12),
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      color: Colors.green[700],
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                                    child: const Row(
-                                      children: [
-                                        Icon(Icons.check_circle, color: Colors.white, size: 20),
-                                        SizedBox(width: 10),
-                                        Expanded(
-                                          child: Text(
-                                            'Profil mis à jour !',
-                                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              const SizedBox(height: 26),
-                              Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.all(14),
-                                decoration: BoxDecoration(
-                                  gradient: const LinearGradient(
-                                    colors: [Color(0xFF1D2742), Color(0xFF7C9BFF)],
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
-                                  ),
-                                  borderRadius: BorderRadius.circular(18),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.all(10),
-                                      decoration: BoxDecoration(
-                                        color: Colors.white24,
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: const Icon(Icons.flash_on, color: Colors.white, size: 20),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: const [
-                                          Text('REEM', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 17)),
-                                          SizedBox(height: 4),
-                                          Text(
-                                            'Une présence créative plus élégante et cohérente.',
-                                            style: TextStyle(color: Colors.white70, fontSize: 12),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    TextButton(
-                                      onPressed: () {},
-                                      style: TextButton.styleFrom(
-                                        foregroundColor: Colors.white,
-                                        textStyle: const TextStyle(fontWeight: FontWeight.bold),
-                                      ),
-                                      child: const Text('Découvrir'),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                            ],
-                          ),
+                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                          child: _buildProfileHeader(),
                         ),
                       ),
                       SliverPersistentHeader(
                         pinned: true,
                         delegate: _ProfileTabsDelegate(
                       Container(
-                        color: const Color(0xFF0B1020),
+                        color: ReemColors.background,
                         child: TabBar(
-                          indicatorColor: const Color(0xFF7C9BFF),
+                          indicatorColor: ReemColors.primary,
                           indicatorWeight: 3,
+                          indicatorSize: TabBarIndicatorSize.tab,
+                          dividerColor: Colors.white12,
                           labelColor: Colors.white,
-                          unselectedLabelColor: Colors.white54,
+                          unselectedLabelColor: Colors.white38,
                           tabs: const [
-                            Tab(icon: Icon(Icons.grid_on), text: 'Publications'),
-                            Tab(icon: Icon(Icons.favorite_border), text: 'Aimés'),
+                            Tab(icon: Icon(Icons.grid_view_rounded), height: 46),
+                            Tab(icon: Icon(Icons.favorite_border_rounded), height: 46),
                           ],
                         ),
                       ),
@@ -791,7 +879,18 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
                           ],
                         ),
                   ),
-                ),
+                )),
+    );
+  }
+
+  /// Sur ordinateur, le contenu reste centré (pas de vidéos géantes)
+  Widget _wideCenter(Widget child) {
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 980),
+        child: child,
+      ),
     );
   }
 }
@@ -803,246 +902,14 @@ class _ProfileTabsDelegate extends SliverPersistentHeaderDelegate {
   final Widget child;
 
   @override
-  double get minExtent => 72;
+  double get minExtent => 47;
 
   @override
-  double get maxExtent => 72;
+  double get maxExtent => 47;
 
   @override
   Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) => child;
 
   @override
   bool shouldRebuild(covariant _ProfileTabsDelegate oldDelegate) => true;
-}
-class EditProfileScreen extends StatefulWidget {
-  final String initialName;
-  final String? initialPhotoUrl;
-  final void Function(Map<String, dynamic>) onProfileUpdated;
-
-  const EditProfileScreen({
-    super.key,
-    required this.initialName,
-    this.initialPhotoUrl,
-    required this.onProfileUpdated,
-  });
-
-  @override
-  State<EditProfileScreen> createState() => _EditProfileScreenState();
-}
-
-class _EditProfileScreenState extends State<EditProfileScreen> {
-  final SessionManager _sessionManager = SessionManager();
-  final TextEditingController _nameController = TextEditingController();
-  String? _selectedPhotoPath;
-  String? _currentPhotoUrl;
-  bool _isUpdating = false;
-  bool _isDeletingPhoto = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _nameController.text = widget.initialName;
-    _currentPhotoUrl = widget.initialPhotoUrl;
-  }
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    super.dispose();
-  }
-
-  // Future<void> _pickProfilePhoto() async {
-  //   final picker = ImagePicker();
-  //   final pickedFile = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
-  //   if (pickedFile != null && mounted) {
-  //     setState(() {
-  //       _selectedPhotoPath = pickedFile.path;
-  //     });
-  //   }
-  // }
-
-  Future<void> _saveProfileChanges() async {
-    if (!_sessionManager.isAuthenticated || _sessionManager.authToken == null) {
-      return;
-    }
-
-    final token = _sessionManager.authToken!;
-    final currentName = widget.initialName.trim();
-    final newName = _nameController.text.trim();
-    final shouldUpdateName = newName.isNotEmpty && newName != currentName;
-    final shouldUpdatePhoto = _selectedPhotoPath != null;
-
-    if (!shouldUpdateName && !shouldUpdatePhoto) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Aucun changement détecté.'), behavior: SnackBarBehavior.floating),
-      );
-      return;
-    }
-
-    setState(() => _isUpdating = true);
-    final updatedUser = Map<String, dynamic>.from(_sessionManager.currentUser ?? {});
-
-    try {
-      if (shouldUpdatePhoto) {
-        final photoResponse = await AuthService().updateProfilePhoto(token, _selectedPhotoPath!);
-        if (photoResponse != null && photoResponse.containsKey('user')) {
-          updatedUser.addAll(Map<String, dynamic>.from(photoResponse['user'] as Map<String, dynamic>));
-        }
-      }
-
-      if (shouldUpdateName) {
-        final profileResponse = await AuthService().updateProfileInfo(token, newName);
-        if (profileResponse != null && profileResponse.containsKey('user')) {
-          updatedUser.addAll(Map<String, dynamic>.from(profileResponse['user'] as Map<String, dynamic>));
-        }
-      }
-
-      if (!mounted) return;
-      if (updatedUser.isNotEmpty) {
-        widget.onProfileUpdated(updatedUser);
-      }
-
-      Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profil mis à jour avec succès.'), behavior: SnackBarBehavior.floating),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erreur de mise à jour: $e'), behavior: SnackBarBehavior.floating),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _isUpdating = false);
-      }
-    }
-  }
-
-  Future<void> _deleteCurrentProfilePhoto() async {
-    if (_selectedPhotoPath != null) {
-      setState(() {
-        _selectedPhotoPath = null;
-      });
-      return;
-    }
-
-    if (!_sessionManager.isAuthenticated || _sessionManager.authToken == null) {
-      return;
-    }
-
-    if (_currentPhotoUrl == null) {
-      return;
-    }
-
-    setState(() => _isDeletingPhoto = true);
-    try {
-      final response = await AuthService().deleteProfilePhoto(_sessionManager.authToken!);
-      if (response != null && response.containsKey('user')) {
-        final updatedUser = Map<String, dynamic>.from(response['user'] as Map<String, dynamic>);
-        if (!mounted) return;
-        setState(() {
-          _currentPhotoUrl = null;
-          _selectedPhotoPath = null;
-        });
-        widget.onProfileUpdated(updatedUser);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Photo de profil supprimée.'), behavior: SnackBarBehavior.floating),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Impossible de supprimer la photo: $e'), behavior: SnackBarBehavior.floating),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _isDeletingPhoto = false);
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final imageUrl = _selectedPhotoPath != null ? null : _currentPhotoUrl;
-
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        title: const Text('Modifier le profil', style: TextStyle(color: Colors.white)),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(
-              controller: _nameController,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                labelText: 'Nom',
-                labelStyle: const TextStyle(color: Colors.white70),
-                filled: true,
-                fillColor: Colors.white12,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-              ),
-            ),
-            const SizedBox(height: 24),
-            if (_selectedPhotoPath != null || imageUrl != null)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: _selectedPhotoPath != null
-                    ? Image.file(File(_selectedPhotoPath!), width: double.infinity, height: 220, fit: BoxFit.cover)
-                    : Image.network(imageUrl!, width: double.infinity, height: 220, fit: BoxFit.cover),
-              ),
-            if (_selectedPhotoPath != null || imageUrl != null) const SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: null, // _pickProfilePhoto, // Désactivé
-              icon: const Icon(Icons.photo_library),
-              label: const Text('Choisir une nouvelle photo'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.redAccent,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-            const SizedBox(height: 12),
-            if (_selectedPhotoPath != null || imageUrl != null)
-              SizedBox(
-                width: double.infinity,
-                child: TextButton.icon(
-                  onPressed: _isDeletingPhoto ? null : _deleteCurrentProfilePhoto,
-                  icon: const Icon(Icons.delete, color: Colors.redAccent),
-                  label: Text(
-                    _selectedPhotoPath != null ? 'Annuler la sélection' : 'Supprimer la photo actuelle',
-                    style: const TextStyle(color: Colors.redAccent),
-                  ),
-                  style: TextButton.styleFrom(
-                    backgroundColor: Colors.white12,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
-              ),
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _isUpdating ? null : _saveProfileChanges,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: Colors.black,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  child: _isUpdating
-                      ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Text('Enregistrer', style: TextStyle(fontWeight: FontWeight.bold)),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

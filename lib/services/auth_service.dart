@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 class AuthService {
@@ -37,6 +38,8 @@ class AuthService {
     String email,
     String password, {
     String? imagePath,
+    Uint8List? imageBytes,
+    String? imageName,
   }) async {
     try {
       final request = http.MultipartRequest(
@@ -52,7 +55,15 @@ class AuthService {
       request.fields['email'] = email;
       request.fields['password'] = password;
 
-      if (imagePath != null) {
+      if (imageBytes != null) {
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'profile_photo',
+            imageBytes,
+            filename: imageName ?? 'photo.jpg',
+          ),
+        );
+      } else if (imagePath != null) {
         request.files.add(
           await http.MultipartFile.fromPath(
             'profile_photo',
@@ -106,7 +117,7 @@ class AuthService {
     try {
       final request = http.MultipartRequest(
         'POST',
-        Uri.parse('$baseUrl/user/update-photo'),
+        Uri.parse('$baseUrl/user/profile-photo'),
       );
 
       request.headers.addAll({
@@ -142,8 +153,8 @@ class AuthService {
     String name,
   ) async {
     try {
-      final response = await http.patch(
-        Uri.parse('$baseUrl/user/profile'),
+      final response = await http.put(
+        Uri.parse('$baseUrl/user/info'),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',

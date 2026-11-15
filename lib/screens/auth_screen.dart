@@ -1,5 +1,9 @@
-import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import '../theme/reem_theme.dart';
+import '../theme/reem_logo.dart';
 // import 'package:image_picker/image_picker.dart'; // Commenté pour désactiver la sélection d'image
 import '../services/auth_service.dart';
 import '../services/google_sign_in_service.dart';
@@ -21,19 +25,28 @@ class _AuthScreenState extends State<AuthScreen> {
   final _confirmPasswordController = TextEditingController();
   bool _isLoading = false;
   String _errorMessage = '';
-  File? _selectedImage;
+  Uint8List? _photoBytes;
+  String? _photoName;
 
   final AuthService _authService = AuthService();
   final GoogleSignInService _googleSignInService = GoogleSignInService();
   final SessionManager _sessionManager = SessionManager();
 
-  // Future<void> _pickImage() async {
-  //   final picker = ImagePicker();
-  //   final pickedFile = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
-  //   if (pickedFile != null) {
-  //     setState(() => _selectedImage = File(pickedFile.path));
-  //   }
-  // }
+  Future<void> _pickImage() async {
+    final result = await FilePicker.platform.pickFiles(type: FileType.image, withData: true);
+    if (result == null || result.files.isEmpty) return;
+    final file = result.files.first;
+    if (file.bytes == null) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setState(() => _errorMessage = 'La photo est trop lourde (5 Mo maximum).');
+      return;
+    }
+    setState(() {
+      _photoBytes = file.bytes;
+      _photoName = file.name;
+      _errorMessage = '';
+    });
+  }
 
   Future<void> _register() async {
     if (_passwordController.text != _confirmPasswordController.text) {
@@ -56,7 +69,8 @@ class _AuthScreenState extends State<AuthScreen> {
         _nameController.text,
         _emailController.text,
         _passwordController.text,
-        imagePath: _selectedImage?.path,
+        imageBytes: _photoBytes,
+        imageName: _photoName,
       );
 
       if (response != null && response.containsKey('access_token')) {
@@ -126,7 +140,7 @@ class _AuthScreenState extends State<AuthScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0B1A2E),
+      backgroundColor: ReemColors.background,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -142,7 +156,7 @@ class _AuthScreenState extends State<AuthScreen> {
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color(0xFF0B1A2E), Color(0xFF111F34)],
+            colors: [Color(0xFF1B2547), ReemColors.background],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -155,8 +169,8 @@ class _AuthScreenState extends State<AuthScreen> {
               constraints: const BoxConstraints(maxWidth: 520),
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
-                color: const Color(0xFF121B2D).withValues(alpha: 0.92),
-                borderRadius: BorderRadius.circular(28),
+                color: ReemColors.surface.withValues(alpha: 0.92),
+                borderRadius: BorderRadius.circular(26),
                 border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
                 boxShadow: [
                   BoxShadow(
@@ -172,22 +186,13 @@ class _AuthScreenState extends State<AuthScreen> {
                 children: [
               // Logo/Titre
               const SizedBox(height: 40),
-              const Text(
-                'REEM',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 48,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 2,
-                ),
-              ),
+              const ReemLogo(),
               const SizedBox(height: 12),
               const Text(
                 'Partage tes vidéos',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: Colors.grey,
+                  color: ReemColors.textMuted,
                   fontSize: 14,
                 ),
               ),
@@ -196,12 +201,12 @@ class _AuthScreenState extends State<AuthScreen> {
               // Sélecteur d'image
               Center(
                 child: GestureDetector(
-                  onTap: null, // _pickImage, // Désactivé
+                  onTap: _pickImage,
                   child: CircleAvatar(
                     radius: 50,
-                    backgroundColor: Colors.grey[800],
-                    backgroundImage: _selectedImage != null ? FileImage(_selectedImage!) : null,
-                    child: _selectedImage == null
+                    backgroundColor: ReemColors.surfaceHigh,
+                    backgroundImage: _photoBytes != null ? MemoryImage(_photoBytes!) : null,
+                    child: _photoBytes == null
                         ? const Icon(Icons.add_a_photo, color: Colors.white, size: 30)
                         : null,
                   ),
@@ -215,20 +220,8 @@ class _AuthScreenState extends State<AuthScreen> {
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
                   hintText: 'Nom complet',
-                  hintStyle: const TextStyle(color: Colors.grey),
-                  prefixIcon: const Icon(Icons.person, color: Colors.grey),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.grey),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.grey),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.white),
-                  ),
+                  hintStyle: const TextStyle(color: ReemColors.textMuted),
+                  prefixIcon: const Icon(Icons.person, color: ReemColors.textMuted),
                 ),
               ),
               const SizedBox(height: 16),
@@ -240,20 +233,8 @@ class _AuthScreenState extends State<AuthScreen> {
                 keyboardType: TextInputType.emailAddress,
                 decoration: InputDecoration(
                   hintText: 'Email',
-                  hintStyle: const TextStyle(color: Colors.grey),
-                  prefixIcon: const Icon(Icons.email, color: Colors.grey),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.grey),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.grey),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.white),
-                  ),
+                  hintStyle: const TextStyle(color: ReemColors.textMuted),
+                  prefixIcon: const Icon(Icons.email, color: ReemColors.textMuted),
                 ),
               ),
               const SizedBox(height: 16),
@@ -265,20 +246,8 @@ class _AuthScreenState extends State<AuthScreen> {
                 obscureText: true,
                 decoration: InputDecoration(
                   hintText: 'Mot de passe',
-                  hintStyle: const TextStyle(color: Colors.grey),
-                  prefixIcon: const Icon(Icons.lock, color: Colors.grey),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.grey),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.grey),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.white),
-                  ),
+                  hintStyle: const TextStyle(color: ReemColors.textMuted),
+                  prefixIcon: const Icon(Icons.lock, color: ReemColors.textMuted),
                 ),
               ),
               const SizedBox(height: 16),
@@ -290,20 +259,8 @@ class _AuthScreenState extends State<AuthScreen> {
                 obscureText: true,
                 decoration: InputDecoration(
                   hintText: 'Confirmer le mot de passe',
-                  hintStyle: const TextStyle(color: Colors.grey),
-                  prefixIcon: const Icon(Icons.lock, color: Colors.grey),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.grey),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.grey),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.white),
-                  ),
+                  hintStyle: const TextStyle(color: ReemColors.textMuted),
+                  prefixIcon: const Icon(Icons.lock, color: ReemColors.textMuted),
                 ),
               ),
               const SizedBox(height: 24),
@@ -327,8 +284,8 @@ class _AuthScreenState extends State<AuthScreen> {
               ElevatedButton(
                 onPressed: _isLoading ? null : _register,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: Colors.black,
+                  backgroundColor: ReemColors.primary,
+                  foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -340,7 +297,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         width: 20,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation(Colors.black),
+                          valueColor: AlwaysStoppedAnimation(Colors.white),
                         ),
                       )
                     : const Text(
@@ -356,12 +313,12 @@ class _AuthScreenState extends State<AuthScreen> {
               // Séparateur visuel
               const Row(
                 children: [
-                  Expanded(child: Divider(color: Colors.grey)),
+                  Expanded(child: Divider(color: ReemColors.textMuted)),
                   Padding(
                     padding: EdgeInsets.symmetric(horizontal: 16),
-                    child: Text('OU', style: TextStyle(color: Colors.grey)),
+                    child: Text('OU', style: TextStyle(color: ReemColors.textMuted)),
                   ),
-                  Expanded(child: Divider(color: Colors.grey)),
+                  Expanded(child: Divider(color: ReemColors.textMuted)),
                 ],
               ),
               const SizedBox(height: 16),
@@ -373,7 +330,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     : _continueWithGoogle,
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.white,
-                  side: const BorderSide(color: Colors.white),
+                  side: const BorderSide(color: ReemColors.border),
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -403,7 +360,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 children: [
                   const Text(
                     'Tu as déjà un compte ? ',
-                    style: TextStyle(color: Colors.grey),
+                    style: TextStyle(color: ReemColors.textMuted),
                   ),
                   GestureDetector(
                     onTap: () {

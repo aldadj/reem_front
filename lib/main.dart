@@ -1,8 +1,8 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
-import 'screens/login_screen.dart';
 import 'screens/splash_screen.dart';
+import 'theme/reem_theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -19,9 +19,10 @@ class ReemApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'REEM',
-      theme: ThemeData(
-        useMaterial3: true,
-      ),
+      theme: ReemTheme.dark(),
+      darkTheme: ReemTheme.dark(),
+      themeMode: ThemeMode.dark,
+      scrollBehavior: const ReemScrollBehavior(),
       home: const SplashScreen(),
     );
   }

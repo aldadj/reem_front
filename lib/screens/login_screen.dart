@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../theme/reem_theme.dart';
+import '../theme/reem_logo.dart';
 import '../services/auth_service.dart';
 import '../services/google_sign_in_service.dart';
 import '../services/session_manager.dart';
@@ -106,7 +108,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0B1A2E),
+      backgroundColor: ReemColors.background,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -122,7 +124,7 @@ class _LoginScreenState extends State<LoginScreen> {
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color(0xFF0B1A2E), Color(0xFF111F34)],
+            colors: [Color(0xFF1B2547), ReemColors.background],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -135,8 +137,8 @@ class _LoginScreenState extends State<LoginScreen> {
               constraints: const BoxConstraints(maxWidth: 520),
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
-                color: const Color(0xFF121B2D).withValues(alpha: 0.92),
-                borderRadius: BorderRadius.circular(28),
+                color: ReemColors.surface.withValues(alpha: 0.92),
+                borderRadius: BorderRadius.circular(26),
                 border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
                 boxShadow: [
                   BoxShadow(
@@ -152,22 +154,13 @@ class _LoginScreenState extends State<LoginScreen> {
                 children: [
               // Logo/Titre
               const SizedBox(height: 40),
-              const Text(
-                'REEM',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 48,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 2,
-                ),
-              ),
+              const ReemLogo(),
               const SizedBox(height: 12),
               const Text(
                 'Bienvenue',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: Colors.grey,
+                  color: ReemColors.textMuted,
                   fontSize: 14,
                 ),
               ),
@@ -180,20 +173,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 keyboardType: TextInputType.emailAddress,
                 decoration: InputDecoration(
                   hintText: 'Email',
-                  hintStyle: const TextStyle(color: Colors.grey),
-                  prefixIcon: const Icon(Icons.email, color: Colors.grey),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.grey),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.grey),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.white),
-                  ),
+                  hintStyle: const TextStyle(color: ReemColors.textMuted),
+                  prefixIcon: const Icon(Icons.email, color: ReemColors.textMuted),
                 ),
               ),
               const SizedBox(height: 16),
@@ -205,20 +186,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 obscureText: true,
                 decoration: InputDecoration(
                   hintText: 'Mot de passe',
-                  hintStyle: const TextStyle(color: Colors.grey),
-                  prefixIcon: const Icon(Icons.lock, color: Colors.grey),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.grey),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.grey),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.white),
-                  ),
+                  hintStyle: const TextStyle(color: ReemColors.textMuted),
+                  prefixIcon: const Icon(Icons.lock, color: ReemColors.textMuted),
                 ),
               ),
               const SizedBox(height: 24),
@@ -242,8 +211,8 @@ class _LoginScreenState extends State<LoginScreen> {
               ElevatedButton(
                 onPressed: _isLoading ? null : _login,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: Colors.black,
+                  backgroundColor: ReemColors.primary,
+                  foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -255,7 +224,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         width: 20,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation(Colors.black),
+                          valueColor: AlwaysStoppedAnimation(Colors.white),
                         ),
                       )
                     : const Text(
@@ -271,12 +240,12 @@ class _LoginScreenState extends State<LoginScreen> {
               // Séparateur visuel
               const Row(
                 children: [
-                  Expanded(child: Divider(color: Colors.grey)),
+                  Expanded(child: Divider(color: ReemColors.textMuted)),
                   Padding(
                     padding: EdgeInsets.symmetric(horizontal: 16),
-                    child: Text('OU', style: TextStyle(color: Colors.grey)),
+                    child: Text('OU', style: TextStyle(color: ReemColors.textMuted)),
                   ),
-                  Expanded(child: Divider(color: Colors.grey)),
+                  Expanded(child: Divider(color: ReemColors.textMuted)),
                 ],
               ),
               const SizedBox(height: 16),
@@ -288,7 +257,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     : _continueWithGoogle,
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.white,
-                  side: const BorderSide(color: Colors.white),
+                  side: const BorderSide(color: ReemColors.border),
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -318,7 +287,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 children: [
                   const Text(
                     'Pas encore de compte ? ',
-                    style: TextStyle(color: Colors.grey),
+                    style: TextStyle(color: ReemColors.textMuted),
                   ),
                   GestureDetector(
                     onTap: () {

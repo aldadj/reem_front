@@ -1,6 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../utils/platform_helper.dart';
+import '../theme/reem_theme.dart';
+import 'profile_screen.dart';
 import 'package:http/http.dart' as http;
 // import 'package:image_picker/image_picker.dart'; // Commenté pour désactiver la sélection d'image
 import '../services/session_manager.dart';
@@ -327,7 +330,7 @@ class _FeedScreenState extends State<FeedScreen> {
   }
 
   Widget _buildDesktopSidebar() {
-    final sidebarColor = _isDarkMode ? const Color(0xFF122D48) : const Color(0xFFEAF2F9);
+    final sidebarColor = _isDarkMode ? ReemColors.sidebar : const Color(0xFFEAF2F9);
     final textColor = _isDarkMode ? Colors.white : const Color(0xFF171717);
     final navItems = <(IconData, String, int)>[
       (Icons.home_filled, _isEnglish ? 'For you' : 'Pour toi', 0),
@@ -354,7 +357,7 @@ class _FeedScreenState extends State<FeedScreen> {
                 ? Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.play_circle_fill, color: Colors.redAccent, size: 26),
+                      const Icon(Icons.play_circle_fill, color: ReemColors.primary, size: 26),
                       IconButton(
                         tooltip: 'Développer le menu',
                         padding: EdgeInsets.zero,
@@ -367,7 +370,7 @@ class _FeedScreenState extends State<FeedScreen> {
                   )
                 : Row(
                     children: [
-                      const Icon(Icons.play_circle_fill, color: Colors.redAccent, size: 30),
+                      const Icon(Icons.play_circle_fill, color: ReemColors.primary, size: 30),
                       const SizedBox(width: 10),
                       Text('REEM', style: TextStyle(color: textColor, fontSize: 22, fontWeight: FontWeight.w800)),
                       const Spacer(),
@@ -403,17 +406,17 @@ class _FeedScreenState extends State<FeedScreen> {
                   padding: const EdgeInsets.only(bottom: 4),
                   child: ListTile(
                     dense: true,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     selected: selected,
-                    selectedTileColor: _isDarkMode ? const Color(0xFF254967) : const Color(0xFFD8E8F5),
+                    selectedTileColor: _isDarkMode ? Colors.white.withValues(alpha: 0.09) : const Color(0xFFD8E8F5),
                     contentPadding: EdgeInsets.symmetric(horizontal: _isSidebarCollapsed ? 0 : 12),
                     minLeadingWidth: _isSidebarCollapsed ? 0 : 40,
                     horizontalTitleGap: _isSidebarCollapsed ? 0 : 8,
                     leadingAndTrailingTextStyle: TextStyle(color: textColor),
-                    leading: Tooltip(message: item.$2, child: Icon(item.$1, color: selected ? Colors.redAccent : textColor)),
+                    leading: Tooltip(message: item.$2, child: Icon(item.$1, color: selected ? ReemColors.primary : textColor)),
                     title: _isSidebarCollapsed ? null : Text(item.$2, style: TextStyle(color: textColor, fontWeight: selected ? FontWeight.w700 : FontWeight.w500)),
                     trailing: !_isSidebarCollapsed && item.$3 == 4 && _unreadNotificationsCount > 0
-                        ? Text('$_unreadNotificationsCount', style: const TextStyle(color: Colors.redAccent))
+                        ? Text('$_unreadNotificationsCount', style: const TextStyle(color: ReemColors.primary))
                         : null,
                     onTap: () => _selectDesktopSection(item.$3),
                   ),
@@ -426,7 +429,7 @@ class _FeedScreenState extends State<FeedScreen> {
               margin: const EdgeInsets.only(bottom: 8),
               padding: const EdgeInsets.symmetric(vertical: 6),
               decoration: BoxDecoration(
-                color: _isDarkMode ? const Color(0xFF1A3A58) : Colors.white,
+                color: _isDarkMode ? ReemColors.surfaceHigh : Colors.white,
                 border: Border.all(color: _isDarkMode ? Colors.white12 : Colors.black12),
                 borderRadius: BorderRadius.circular(10),
               ),
@@ -445,7 +448,7 @@ class _FeedScreenState extends State<FeedScreen> {
             ),
           ListTile(
             dense: true,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             leading: Icon(_isDesktopMenuOpen ? Icons.close : Icons.add, color: textColor),
             title: _isSidebarCollapsed ? null : Text(_isDesktopMenuOpen ? (_isEnglish ? 'Close menu' : 'Fermer le menu') : (_isEnglish ? 'More' : 'Plus'), style: TextStyle(color: textColor)),
             contentPadding: EdgeInsets.symmetric(horizontal: _isSidebarCollapsed ? 0 : 12),
@@ -584,46 +587,13 @@ class _FeedScreenState extends State<FeedScreen> {
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.sizeOf(context).width >= 1120;
     return Theme(
-      data: _isDarkMode ? ThemeData.dark(useMaterial3: true) : ThemeData.light(useMaterial3: true),
+      data: _isDarkMode ? ReemTheme.dark() : ThemeData.light(useMaterial3: true),
       child: Scaffold(
-      backgroundColor: _isDarkMode ? const Color(0xFF0B1A2E) : const Color(0xFFF3F4F6),
+      backgroundColor: _isDarkMode ? ReemColors.background : const Color(0xFFF3F4F6),
       extendBodyBehindAppBar: false,
       extendBody: false,
 
-      appBar: isDesktop ? null : AppBar(
-        backgroundColor: _isDarkMode ? const Color(0xFF0B1A2E) : const Color(0xFFF3F4F6),
-        elevation: 0,
-        automaticallyImplyLeading: false,
-        leadingWidth: 0,
-        leading: const SizedBox.shrink(),
-        title: Row(
-          children: [
-            Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: const Color(0xFF7C9BFF).withValues(alpha: _isDarkMode ? 0.16 : 0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.auto_awesome, color: Color(0xFF7C9BFF), size: 20),
-            ),
-            const SizedBox(width: 10),
-            Text(
-              "REEM",
-              style: TextStyle(color: _isDarkMode ? Colors.white : const Color(0xFF132B45), fontWeight: FontWeight.w700, fontSize: 20),
-            ),
-          ],
-        ),
-        centerTitle: false,
-        actions: [
-          IconButton(
-            icon: Icon(Icons.search_rounded, color: _isDarkMode ? Colors.white70 : const Color(0xFF132B45), size: 24),
-            tooltip: 'Rechercher une vidéo',
-            onPressed: _searchVideos,
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
+      appBar: null,
 
       body: isDesktop
           ? Row(
@@ -634,114 +604,180 @@ class _FeedScreenState extends State<FeedScreen> {
               ],
             )
           : _currentBottomIndex == 4
-              ? _buildProfileScreen()
+              ? SafeArea(bottom: false, child: _buildProfileScreen())
               : _currentBottomIndex == 3
-                  ? MessagesScreen(onUnreadCountChanged: _updateUnreadNotificationsCount)
-                : _buildMobileFeedScreen(),
+                  ? SafeArea(
+                      bottom: false,
+                      child: MessagesScreen(onUnreadCountChanged: _updateUnreadNotificationsCount),
+                    )
+                  : _buildMobileFeedScreen(),
 
-      bottomNavigationBar: isDesktop ? null : BottomNavigationBar(
-        type: BottomNavigationBarType.fixed,
-        backgroundColor: const Color(0xFF0F1628),
-        elevation: 0,
-        unselectedItemColor: Colors.white38,
-        selectedItemColor: const Color(0xFF7C9BFF),
-        selectedIconTheme: const IconThemeData(size: 24, color: Color(0xFF7C9BFF)),
-        showSelectedLabels: true,
-        showUnselectedLabels: false,
-        currentIndex: _currentBottomIndex,
-        onTap: (index) {
-          if (index == 2) {
-            // Vérifier si l'utilisateur est connecté avant de publier
-            if (_sessionManager.isAuthenticated) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const UploadScreen()),
-              ).then((_) => _fetchVideos());
-            } else {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const AuthScreen()),
-              );
-            }
-          } else {
-            if (index == 0) {
-              _isFeedVisible.value = true;
-              for (var tab = 0; tab < _mobileTabVisibility.length; tab++) {
-                _mobileTabVisibility[tab].value = tab == 2;
-              }
-              _activateMobileFeedTab(2);
-              _fetchVideos();
-            } else if (index == 1) {
-              _isFeedVisible.value = true;
-              for (var tab = 0; tab < _mobileTabVisibility.length; tab++) {
-                _mobileTabVisibility[tab].value = tab == 1;
-              }
-              _activateMobileFeedTab(1);
-              _fetchFriendsVideos();
-            } else {
-              _isFeedVisible.value = false;
-              for (final visibility in _mobileTabVisibility) {
-                visibility.value = false;
-              }
-            }
+      bottomNavigationBar: isDesktop ? null : _buildBottomBar(),
+      ),
+    );
+  }
 
-            setState(() {
-              _currentBottomIndex = index;
-              if (index == 3) {
-                _fetchUnreadNotificationsCount();
-              }
-              if (index == 4) {
-                _fetchUserVideos();
-                _fetchExploreVideos();
-              }
-            });
+  void _handleBottomTap(int index) {
+      if (index == 2) {
+        // Vérifier si l'utilisateur est connecté avant de publier
+        if (_sessionManager.isAuthenticated) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const UploadScreen()),
+          ).then((_) => _fetchVideos());
+        } else {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const AuthScreen()),
+          );
+        }
+      } else {
+        if (index == 0) {
+          _isFeedVisible.value = true;
+          for (var tab = 0; tab < _mobileTabVisibility.length; tab++) {
+            _mobileTabVisibility[tab].value = tab == 2;
           }
-        },
-        items: [
-          const BottomNavigationBarItem(icon: Icon(Icons.home_rounded), label: 'Accueil'),
-          const BottomNavigationBarItem(icon: Icon(Icons.group_outlined), label: 'Ami(e)s'),
-          BottomNavigationBarItem(
-            icon: Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: const Color(0xFF7C9BFF),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: const Icon(Icons.add_rounded, color: Colors.white, size: 22),
-            ),
-            label: '',
-          ),
-          BottomNavigationBarItem(
-            icon: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                const Icon(Icons.forum_outlined),
-                if (_unreadNotificationsCount > 0)
-                  Positioned(
-                    right: -6,
-                    top: -6,
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF7C9BFF),
-                        shape: BoxShape.circle,
+          _activateMobileFeedTab(2);
+          _fetchVideos();
+        } else if (index == 1) {
+          _isFeedVisible.value = true;
+          for (var tab = 0; tab < _mobileTabVisibility.length; tab++) {
+            _mobileTabVisibility[tab].value = tab == 1;
+          }
+          _activateMobileFeedTab(1);
+          _fetchFriendsVideos();
+        } else {
+          _isFeedVisible.value = false;
+          for (final visibility in _mobileTabVisibility) {
+            visibility.value = false;
+          }
+        }
+
+        setState(() {
+          _currentBottomIndex = index;
+          if (index == 3) {
+            _fetchUnreadNotificationsCount();
+          }
+          if (index == 4) {
+            _fetchUserVideos();
+            _fetchExploreVideos();
+          }
+        });
+      }
+  }
+
+  Widget _buildBottomBar() {
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+
+    Widget navItem(int index, IconData icon, IconData activeIcon, String label, {int badge = 0}) {
+      final selected = _currentBottomIndex == index;
+      return Expanded(
+        child: Semantics(
+          button: true,
+          label: label,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => _handleBottomTap(index),
+            child: SizedBox(
+              height: 58,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      AnimatedScale(
+                        scale: selected ? 1.12 : 1.0,
+                        duration: const Duration(milliseconds: 180),
+                        curve: Curves.easeOutBack,
+                        child: Icon(
+                          selected ? activeIcon : icon,
+                          size: 27,
+                          color: selected ? Colors.white : Colors.white54,
+                        ),
                       ),
-                      constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
-                      child: Text(
-                        _unreadNotificationsCount > 99 ? '99+' : '$_unreadNotificationsCount',
-                        style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
-                        textAlign: TextAlign.center,
-                      ),
+                      if (badge > 0)
+                        Positioned(
+                          right: -10,
+                          top: -6,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                            constraints: const BoxConstraints(minWidth: 17, minHeight: 17),
+                            decoration: BoxDecoration(
+                              color: ReemColors.like,
+                              borderRadius: BorderRadius.circular(9),
+                              border: Border.all(color: ReemColors.background, width: 1.5),
+                            ),
+                            child: Text(
+                              badge > 99 ? '99+' : '$badge',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: selected ? 18 : 0,
+                    height: 3,
+                    decoration: BoxDecoration(
+                      gradient: ReemColors.gradient,
+                      borderRadius: BorderRadius.circular(2),
                     ),
                   ),
-              ],
+                ],
+              ),
             ),
-            label: 'Messages',
           ),
-          const BottomNavigationBarItem(icon: Icon(Icons.person_outline), label: 'Profil'),
-        ],
+        ),
+      );
+    }
+
+    // Hauteur fixe : sans elle, le bouton + central (Center) prenait tout l'écran
+    return Container(
+      height: 58 + bottomInset,
+      padding: EdgeInsets.only(bottom: bottomInset),
+      decoration: BoxDecoration(
+        color: ReemColors.background,
+        border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.07))),
       ),
+      child: Row(
+        children: [
+          navItem(0, Icons.home_outlined, Icons.home_rounded, 'Accueil'),
+          navItem(1, Icons.group_outlined, Icons.group_rounded, 'Ami(e)s'),
+          Expanded(
+            child: Semantics(
+              button: true,
+              label: 'Publier une vidéo',
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _handleBottomTap(2),
+                child: Center(
+                  child: Container(
+                    width: 54,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      gradient: ReemColors.gradient,
+                      borderRadius: BorderRadius.circular(13),
+                      boxShadow: [
+                        BoxShadow(
+                          color: ReemColors.accent.withValues(alpha: 0.4),
+                          blurRadius: 14,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(Icons.add_rounded, color: Colors.white, size: 28),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          navItem(3, Icons.chat_bubble_outline_rounded, Icons.chat_bubble_rounded, 'Messages', badge: _unreadNotificationsCount),
+          navItem(4, Icons.person_outline_rounded, Icons.person_rounded, 'Profil'),
+        ],
       ),
     );
   }
@@ -763,30 +799,85 @@ class _FeedScreenState extends State<FeedScreen> {
             itemBuilder: (context, page) => _buildMobileVideoPage(visibleTabs[page]),
           ),
         ),
+        // Dégradé haut : onglets lisibles sur n'importe quelle vidéo
         Positioned(
-          top: 2,
+          top: 0,
           left: 0,
           right: 0,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(visibleTabs.length, (index) {
-              final tab = visibleTabs[index];
-              final selected = _mobileFeedTabIndex == tab;
-              return InkWell(
-                onTap: () => _activateMobileFeedTab(tab, animate: true),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                  child: Column(
+          child: IgnorePointer(
+            child: Container(
+              height: MediaQuery.paddingOf(context).top + 96,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.black.withValues(alpha: 0.55), Colors.transparent],
+                ),
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          top: MediaQuery.paddingOf(context).top + 6,
+          left: 0,
+          right: 0,
+          child: SizedBox(
+            height: 46,
+            child: Stack(
+              children: [
+                Center(
+                  child: Row(
                     mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(tabLabels[tab]!, style: TextStyle(color: selected ? Colors.white : Colors.white70, fontWeight: selected ? FontWeight.w700 : FontWeight.w500, fontSize: 13, shadows: const [Shadow(color: Colors.black54, blurRadius: 5)])),
-                      const SizedBox(height: 3),
-                      Container(width: 22, height: 2, color: selected ? const Color(0xFF7C9BFF) : Colors.transparent),
-                    ],
+                    children: List.generate(visibleTabs.length, (index) {
+                      final tab = visibleTabs[index];
+                      final selected = _mobileFeedTabIndex == tab;
+                      return GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => _activateMobileFeedTab(tab, animate: true),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              AnimatedDefaultTextStyle(
+                                duration: const Duration(milliseconds: 180),
+                                style: TextStyle(
+                                  color: selected ? Colors.white : Colors.white60,
+                                  fontSize: selected ? 17 : 16,
+                                  fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                                  shadows: reemTextShadow,
+                                ),
+                                child: Text(tabLabels[tab]!),
+                              ),
+                              const SizedBox(height: 4),
+                              AnimatedContainer(
+                                duration: const Duration(milliseconds: 220),
+                                width: selected ? 24 : 0,
+                                height: 3,
+                                decoration: BoxDecoration(
+                                  gradient: ReemColors.gradient,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }),
                   ),
                 ),
-              );
-            }),
+                Positioned(
+                  right: 6,
+                  top: 0,
+                  bottom: 0,
+                  child: IconButton(
+                    tooltip: 'Rechercher une vidéo',
+                    onPressed: _searchVideos,
+                    icon: const Icon(Icons.search_rounded, color: Colors.white, size: 28, shadows: reemTextShadow),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ],
@@ -990,11 +1081,11 @@ class _FeedScreenState extends State<FeedScreen> {
   Widget _buildProfileAvatar(Map<String, dynamic>? user) {
     String? photoPath = user?['profile_photo_path'];
     if (photoPath != null) {
-      if (Platform.isAndroid && (photoPath.contains('localhost') || photoPath.contains('127.0.0.1'))) {
+      if (isAndroidPlatform && (photoPath.contains('localhost') || photoPath.contains('127.0.0.1'))) {
         photoPath = photoPath.replaceAll('localhost', '10.0.2.2').replaceAll('127.0.0.1', '10.0.2.2');
       }
       if (!photoPath.startsWith('http')) {
-        final domain = Platform.isAndroid ? "http://10.0.2.2:8000" : "http://127.0.0.1:8000";
+        final domain = AuthService.baseUrl.replaceFirst(RegExp(r'/api$'), '');
         photoPath = domain + (photoPath.startsWith('/') ? '' : '/') + photoPath;
       }
     }
@@ -1079,6 +1170,17 @@ class _FeedScreenState extends State<FeedScreen> {
             ],
           ),
         ),
+      );
+    }
+
+    final dynamic rawId = user?['id'];
+    final int? myId = rawId is int ? rawId : int.tryParse('$rawId');
+    if (myId != null) {
+      return ProfileScreen(
+        key: ValueKey('profil_$myId'),
+        userId: myId,
+        embedded: true,
+        onLogout: _logout,
       );
     }
 

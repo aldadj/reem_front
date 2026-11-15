@@ -20,8 +20,11 @@ class VideoCommentsPanel extends StatefulWidget {
     required this.videoId,
     required this.onClose,
     required this.onCountChanged,
+    this.highlightCommentId,
   });
 
+  /// Commentaire à faire défiler et surligner à l'ouverture (depuis une notification)
+  final int? highlightCommentId;
   final int videoId;
   final VoidCallback onClose;
   final ValueChanged<int> onCountChanged;
@@ -39,6 +42,8 @@ class _VideoCommentsPanelState extends State<VideoCommentsPanel> {
   List<Map<String, dynamic>> _comments = []; // commentaires principaux
   final Map<int, List<Map<String, dynamic>>> _replies = {}; // parent -> réponses
   final Set<int> _expanded = {}; // commentaires dont les réponses sont ouvertes
+  final Map<int, GlobalKey> _keys = {};
+  int? _highlightId;
 
   bool _isLoading = true;
   bool _isSending = false;
@@ -138,9 +143,50 @@ class _VideoCommentsPanelState extends State<VideoCommentsPanel> {
         _isLoading = false;
       });
       widget.onCountChanged(_total);
+      _revealHighlight();
     } catch (_) {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  // Fait défiler jusqu'au commentaire visé et le surligne quelques secondes
+  void _revealHighlight() {
+    final target = widget.highlightCommentId;
+    if (target == null) return;
+
+    int? rootId;
+    if (_comments.any((c) => _asInt(c['id']) == target)) {
+      rootId = target;
+    } else {
+      for (final entry in _replies.entries) {
+        if (entry.value.any((r) => _asInt(r['id']) == target)) {
+          rootId = entry.key;
+          break;
+        }
+      }
+    }
+    if (rootId == null) return;
+
+    final root = rootId;
+    setState(() {
+      _highlightId = target;
+      if (root != target) _expanded.add(root);
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final context = _keys[target]?.currentContext;
+      if (context != null) {
+        Scrollable.ensureVisible(
+          context,
+          duration: const Duration(milliseconds: 450),
+          alignment: 0.25,
+          curve: Curves.easeOutCubic,
+        );
+      }
+    });
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _highlightId = null);
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -300,8 +346,14 @@ class _VideoCommentsPanelState extends State<VideoCommentsPanel> {
     final name = user['name']?.toString() ?? 'Utilisateur';
     final liked = comment['liked_by_user'] == true;
     final likes = (comment['likes_count'] as num?)?.toInt() ?? 0;
+    final commentId = _asInt(comment['id']);
+    final highlighted = commentId != null && commentId == _highlightId;
 
-    return Padding(
+    return AnimatedContainer(
+      key: commentId != null ? _keys.putIfAbsent(commentId, () => GlobalKey()) : null,
+      duration: const Duration(milliseconds: 400),
+      color: highlighted ? Colors.white.withValues(alpha: 0.14) : Colors.transparent,
+      child: Padding(
       padding: EdgeInsets.fromLTRB(isReply ? 56 : 16, 8, 8, 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -378,6 +430,7 @@ class _VideoCommentsPanelState extends State<VideoCommentsPanel> {
             ],
           ),
         ],
+      ),
       ),
     );
   }
@@ -468,10 +521,13 @@ class _VideoCommentsPanelState extends State<VideoCommentsPanel> {
                             style: TextStyle(color: Colors.white60),
                           ),
                         )
-                      : ListView(
+                      : SingleChildScrollView(
                           controller: _scrollController,
                           padding: const EdgeInsets.symmetric(vertical: 8),
-                          children: _buildRows(),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: _buildRows(),
+                          ),
                         ),
             ),
             const Divider(height: 1, color: Colors.white12),
