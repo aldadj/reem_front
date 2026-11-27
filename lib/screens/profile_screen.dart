@@ -6,6 +6,10 @@ import '../utils/platform_helper.dart';
 import '../theme/reem_theme.dart';
 import 'chat_screen.dart';
 import 'edit_profile_screen.dart';
+import 'photo_crop_screen.dart';
+import 'photo_viewer_screen.dart';
+import 'settings_screen.dart';
+import '../services/video_interaction_store.dart';
 import 'package:file_picker/file_picker.dart';
 import '../services/account_service.dart';
 import '../widgets/account_dialogs.dart';
@@ -149,16 +153,16 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
     final pinned = _isPinned(video);
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF121B2D),
+      backgroundColor: context.reem.surface,
       builder: (sheetContext) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: Icon(pinned ? Icons.push_pin_outlined : Icons.push_pin, color: Colors.white),
+              leading: Icon(pinned ? Icons.push_pin_outlined : Icons.push_pin, color: context.reem.text),
               title: Text(
                 pinned ? 'Désépingler' : 'Épingler en haut du profil',
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: context.reem.text),
               ),
               onTap: () {
                 Navigator.pop(sheetContext);
@@ -234,17 +238,19 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
     if (result != null) {
       setState(() {
         _profile?['is_following'] = result['following'];
+        _profile?['follows_me'] = result['follows_me'];
         _profile?['followers_count'] = result['followers_count'];
       });
 
       final bool followed = result['following'] == true;
+      FollowCache.set(widget.userId, followed); // le petit « + » du fil se met à jour
       setState(() => _pulseFollow = true);
       Future.delayed(const Duration(milliseconds: 260), () {
         if (mounted) setState(() => _pulseFollow = false);
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(followed ? 'Vous êtes abonné' : 'Abonnement annulé'),
+          content: Text(followed ? (result['follows_me'] == true ? 'Vous êtes maintenant amis' : 'Vous êtes abonné') : 'Abonnement annulé'),
           backgroundColor: followed ? Colors.green : Colors.grey[800],
           behavior: SnackBarBehavior.floating,
         ),
@@ -282,9 +288,7 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
   String _profileBio() {
     final bio = _profile?['bio']?.toString().trim();
     if (bio != null && bio.isNotEmpty) return bio;
-    final email = _profile?['email']?.toString().trim();
-    if (email != null && email.isNotEmpty) return email;
-    return 'Partage des vidéos créatives et inspirantes.';
+    return '';
   }
 
   bool get _isOwnProfile {
@@ -307,22 +311,23 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
         children: [
           Text(
             value,
-            style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800),
+            style: TextStyle(color: context.reem.text, fontSize: 20, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 3),
-          Text(label, style: const TextStyle(color: ReemColors.textMuted, fontSize: 12.5)),
+          Text(label, style: TextStyle(color: context.reem.textMuted, fontSize: 12.5)),
         ],
       ),
     );
   }
 
-  Widget _statDivider() => Container(width: 1, height: 22, color: Colors.white12);
+  Widget _statDivider() => Container(width: 1, height: 22, color: context.reem.border);
 
   void _showProfileMenu() {
-    Widget item(IconData icon, String label, VoidCallback onTap, {Color color = Colors.white}) {
+    Widget item(IconData icon, String label, VoidCallback onTap, {Color? color}) {
+      final tint = color ?? context.reem.text;
       return ListTile(
-        leading: Icon(icon, color: color),
-        title: Text(label, style: TextStyle(color: color)),
+        leading: Icon(icon, color: tint),
+        title: Text(label, style: TextStyle(color: tint)),
         onTap: () {
           Navigator.pop(context);
           onTap();
@@ -337,6 +342,12 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              item(Icons.settings_outlined, 'Paramètres', () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => SettingsScreen(onLogout: widget.onLogout)),
+                );
+              }),
               item(Icons.edit_outlined, 'Modifier le profil', _openEditProfileSheet),
               item(Icons.camera_alt_outlined, 'Changer la photo de profil', _changePhotoQuick),
               item(Icons.lock_reset_rounded, 'Changer le mot de passe', () => showChangePasswordDialog(context)),
@@ -369,23 +380,41 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
     );
   }
 
-  // Appui sur la photo de son propre profil : choisir et envoyer une nouvelle photo
+  // Appui sur la photo : la voir en grand (avec « Changer la photo » sur son profil)
+  void _viewOrChangePhoto() {
+    final url = absoluteMediaUrl(_convertPhotoUrl(_profile?['profile_photo_path']?.toString()));
+    if (url == null) {
+      if (_isOwnProfile) _changePhotoQuick();
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PhotoViewerScreen(
+          imageUrl: url,
+          title: _profile?['name']?.toString(),
+          onChange: _isOwnProfile ? _changePhotoQuick : null,
+        ),
+      ),
+    );
+  }
+
+  // Choisir, recadrer puis envoyer une nouvelle photo de profil
   Future<void> _changePhotoQuick() async {
     if (!_isOwnProfile || _uploadingPhoto) return;
     final result = await FilePicker.platform.pickFiles(type: FileType.image, withData: true);
     if (result == null || result.files.isEmpty) return;
     final file = result.files.first;
     if (file.bytes == null) return;
-    if (file.size > 5 * 1024 * 1024) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('La photo est trop lourde (5 Mo maximum).')),
-      );
-      return;
-    }
+    if (!mounted) return;
+
+    // Recadrage avant l'envoi
+    final cropped = await cropProfilePhoto(context, file.bytes!);
+    if (cropped == null || !mounted) return;
 
     setState(() => _uploadingPhoto = true);
     try {
-      final user = await AccountService().uploadPhoto(file.bytes!, file.name);
+      final user = await AccountService().uploadPhoto(cropped, 'photo_profil.png');
       if (!mounted) return;
       setState(() => _profile = {...?_profile, ...user});
       ScaffoldMessenger.of(context).showSnackBar(
@@ -404,6 +433,10 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
     final String displayName = _profile?['name']?.toString() ?? 'Utilisateur';
     final String? photo = _convertPhotoUrl(_profile?['profile_photo_path']);
     final bool isFollowing = _profile?['is_following'] == true;
+    final bool followsMe = _profile?['follows_me'] == true;
+    final String followLabel = isFollowing
+        ? (followsMe ? 'Amis' : 'Abonné(e)')
+        : (followsMe ? 'Suivre en retour' : 'S’abonner');
     final String bio = _profileBio();
 
     return Column(
@@ -413,14 +446,14 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
             alignment: Alignment.centerRight,
             child: IconButton(
               tooltip: 'Menu',
-              icon: const Icon(Icons.menu_rounded, color: Colors.white, size: 28),
+              icon: Icon(Icons.menu_rounded, color: context.reem.text, size: 28),
               onPressed: _showProfileMenu,
             ),
           )
         else
           const SizedBox(height: 8),
         GestureDetector(
-          onTap: _isOwnProfile ? _changePhotoQuick : null,
+          onTap: _viewOrChangePhoto,
           child: Stack(
             children: [
               Container(
@@ -428,10 +461,10 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
                 decoration: const BoxDecoration(shape: BoxShape.circle, gradient: ReemColors.gradient),
                 child: CircleAvatar(
                   radius: 50,
-                  backgroundColor: ReemColors.surfaceHigh,
+                  backgroundColor: context.reem.surfaceHigh,
                   backgroundImage: absoluteMediaUrl(photo) != null ? NetworkImage(absoluteMediaUrl(photo)!) : null,
                   child: absoluteMediaUrl(photo) == null
-                      ? const Icon(Icons.person_rounded, color: Colors.white70, size: 48)
+                      ? Icon(Icons.person_rounded, color: context.reem.textSecondary, size: 48)
                       : null,
                 ),
               ),
@@ -448,14 +481,17 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
                 Positioned(
                   right: 0,
                   bottom: 0,
-                  child: Container(
-                    padding: const EdgeInsets.all(7),
-                    decoration: BoxDecoration(
-                      color: ReemColors.primary,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: ReemColors.background, width: 3),
+                  child: GestureDetector(
+                    onTap: _changePhotoQuick,
+                    child: Container(
+                      padding: const EdgeInsets.all(7),
+                      decoration: BoxDecoration(
+                        color: ReemColors.primary,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: context.reem.background, width: 3),
+                      ),
+                      child: const Icon(Icons.camera_alt_rounded, color: Colors.white, size: 16),
                     ),
-                    child: const Icon(Icons.camera_alt_rounded, color: Colors.white, size: 16),
                   ),
                 ),
             ],
@@ -465,12 +501,12 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
         Text(
           displayName,
           textAlign: TextAlign.center,
-          style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800),
+          style: TextStyle(color: context.reem.text, fontSize: 22, fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 3),
         Text(
           _profileHandle(),
-          style: const TextStyle(color: ReemColors.textMuted, fontSize: 13.5),
+          style: TextStyle(color: context.reem.textMuted, fontSize: 13.5),
         ),
         const SizedBox(height: 20),
         Row(
@@ -492,7 +528,7 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
               icon: const Icon(Icons.edit_outlined, size: 18),
               label: const Text('Modifier le profil'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.white.withValues(alpha: 0.1),
+                backgroundColor: context.reem.text.withValues(alpha: 0.1),
               ),
             ),
           )
@@ -504,29 +540,29 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
                 scale: _pulseFollow ? 1.06 : 1.0,
                 duration: const Duration(milliseconds: 180),
                 child: SizedBox(
-                  width: 190,
+                  width: 210,
                   child: ElevatedButton.icon(
                     onPressed: _isFollowLoading ? null : _toggleFollow,
                     icon: _isFollowLoading
                         ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : Icon(isFollowing ? Icons.check_rounded : Icons.person_add_alt_1_rounded, size: 19),
-                    label: Text(isFollowing ? 'Abonné(e)' : 'S’abonner'),
+                        : Icon(isFollowing ? (followsMe ? Icons.group_rounded : Icons.check_rounded) : Icons.person_add_alt_1_rounded, size: 19),
+                    label: Text(followLabel),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: isFollowing ? Colors.white.withValues(alpha: 0.12) : ReemColors.primary,
+                      backgroundColor: isFollowing ? context.reem.text.withValues(alpha: 0.1) : ReemColors.primary,
                     ),
                   ),
                 ),
               ),
               const SizedBox(width: 10),
               Material(
-                color: Colors.white.withValues(alpha: 0.1),
+                color: context.reem.text.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(14),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(14),
                   onTap: _openMessage,
-                  child: const Padding(
+                  child: Padding(
                     padding: EdgeInsets.all(13),
-                    child: Icon(Icons.send_rounded, color: Colors.white, size: 20),
+                    child: Icon(Icons.send_rounded, color: context.reem.text, size: 20),
                   ),
                 ),
               ),
@@ -538,7 +574,7 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
             child: Text(
               bio,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: ReemColors.textSecondary, fontSize: 14, height: 1.4),
+              style: TextStyle(color: context.reem.textSecondary, fontSize: 14, height: 1.4),
             ),
           ),
         if (_showProfileUpdatedBanner)
@@ -550,12 +586,12 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
                 color: const Color(0xFF1F9D63).withValues(alpha: 0.18),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.check_circle_rounded, color: Color(0xFF3DDC97), size: 18),
+                  Icon(Icons.check_circle_rounded, color: (context.isDarkMode ? const Color(0xFF3DDC97) : const Color(0xFF1B8A5A)), size: 18),
                   SizedBox(width: 8),
-                  Text('Profil mis à jour', style: TextStyle(color: Color(0xFF3DDC97), fontWeight: FontWeight.w600)),
+                  Text('Profil mis à jour', style: TextStyle(color: (context.isDarkMode ? const Color(0xFF3DDC97) : const Color(0xFF1B8A5A)), fontWeight: FontWeight.w600)),
                 ],
               ),
             ),
@@ -610,7 +646,6 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF121212),
         title: const Text('Supprimer cette vidéo ?'),
         content: const Text('Cette action est définitive.'),
         actions: [
@@ -716,7 +751,7 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    Container(color: const Color(0xFF0F172A)),
+                    Container(color: const Color(0xFF150E26)),
                     Positioned.fill(child: _buildVideoThumbnail(thumbnailUrl, mediaUrl)),
                     // Dégradé bas pour lire le compteur
                     Positioned(
@@ -744,13 +779,13 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
                             color: Colors.redAccent,
                             borderRadius: BorderRadius.circular(4),
                           ),
-                          child: const Row(
+                          child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.push_pin, color: Colors.white, size: 11),
+                              Icon(Icons.push_pin, color: context.reem.text, size: 11),
                               SizedBox(width: 3),
                               Text('Épinglé',
-                                  style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
+                                  style: TextStyle(color: context.reem.text, fontSize: 10, fontWeight: FontWeight.w700)),
                             ],
                           ),
                         ),
@@ -799,23 +834,23 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: ReemColors.background,
+      backgroundColor: context.reem.background,
       appBar: widget.embedded ? null : AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text('Profil', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, letterSpacing: 0.2)),
-        iconTheme: const IconThemeData(color: Colors.white),
+        title: Text('Profil', style: TextStyle(color: context.reem.text, fontWeight: FontWeight.w600, letterSpacing: 0.2)),
+        iconTheme: IconThemeData(color: context.reem.text),
         actions: [
           IconButton(
-            icon: const Icon(Icons.more_horiz, color: Colors.white70),
+            icon: Icon(Icons.more_horiz, color: context.reem.textSecondary),
             onPressed: _isOwnProfile ? _showProfileMenu : null,
           ),
         ],
       ),
       body: _wideCenter(_isLoading
-          ? const Center(child: CircularProgressIndicator(color: Colors.white))
+          ? const Center(child: CircularProgressIndicator())
           : _profile == null
-              ? const Center(child: Text('Impossible de charger le profil', style: TextStyle(color: Colors.white)))
+              ? Center(child: Text('Impossible de charger le profil', style: TextStyle(color: context.reem.text)))
               : DefaultTabController(
                   length: 2,
                   child: NestedScrollView(
@@ -830,14 +865,14 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
                         pinned: true,
                         delegate: _ProfileTabsDelegate(
                       Container(
-                        color: ReemColors.background,
+                        color: context.reem.background,
                         child: TabBar(
                           indicatorColor: ReemColors.primary,
                           indicatorWeight: 3,
                           indicatorSize: TabBarIndicatorSize.tab,
-                          dividerColor: Colors.white12,
-                          labelColor: Colors.white,
-                          unselectedLabelColor: Colors.white38,
+                          dividerColor: context.reem.border,
+                          labelColor: context.reem.text,
+                          unselectedLabelColor: context.reem.textMuted,
                           tabs: const [
                             Tab(icon: Icon(Icons.grid_view_rounded), height: 46),
                             Tab(icon: Icon(Icons.favorite_border_rounded), height: 46),
@@ -863,7 +898,7 @@ class _ProfileScreenState extends State<ProfileScreen> with WidgetsBindingObserv
                               padding: EdgeInsets.zero,
                               child: _isOwnProfile
                                   ? (_isLoadingLikes
-                                      ? const Center(child: CircularProgressIndicator(color: Colors.white))
+                                      ? const Center(child: CircularProgressIndicator())
                                       : _buildVideosGrid(
                                           _likedVideos,
                                           emptyMessage: 'Vous n’avez pas encore aimé de vidéos.',

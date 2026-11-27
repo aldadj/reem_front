@@ -11,6 +11,13 @@
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleURLTypes</key>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Reem a besoin d'accéder à tes vidéos pour que tu puisses les publier.</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>instagram</string>
+	</array>
+
 	<array>
 		<dict>
 			<key>CFBundleTypeRole</key>

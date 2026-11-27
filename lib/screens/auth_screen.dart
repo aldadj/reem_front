@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'photo_crop_screen.dart';
 import 'package:flutter/material.dart';
 import '../theme/reem_theme.dart';
 import '../theme/reem_logo.dart';
@@ -37,13 +38,12 @@ class _AuthScreenState extends State<AuthScreen> {
     if (result == null || result.files.isEmpty) return;
     final file = result.files.first;
     if (file.bytes == null) return;
-    if (file.size > 5 * 1024 * 1024) {
-      setState(() => _errorMessage = 'La photo est trop lourde (5 Mo maximum).');
-      return;
-    }
+    if (!mounted) return;
+    final cropped = await cropProfilePhoto(context, file.bytes!);
+    if (cropped == null || !mounted) return;
     setState(() {
-      _photoBytes = file.bytes;
-      _photoName = file.name;
+      _photoBytes = cropped;
+      _photoName = 'photo_profil.png';
       _errorMessage = '';
     });
   }
@@ -140,12 +140,12 @@ class _AuthScreenState extends State<AuthScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: ReemColors.background,
+      backgroundColor: context.reem.background,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.close, color: Colors.white),
+          icon: Icon(Icons.close, color: context.reem.text),
           onPressed: () {
             Navigator.of(context).pushReplacement(
               MaterialPageRoute(builder: (_) => const FeedScreen()),
@@ -154,9 +154,9 @@ class _AuthScreenState extends State<AuthScreen> {
         ),
       ),
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color(0xFF1B2547), ReemColors.background],
+            colors: [context.isDarkMode ? const Color(0xFF2A1650) : const Color(0xFFE6D9FB), context.reem.background],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -169,9 +169,9 @@ class _AuthScreenState extends State<AuthScreen> {
               constraints: const BoxConstraints(maxWidth: 520),
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
-                color: ReemColors.surface.withValues(alpha: 0.92),
+                color: context.reem.surface.withValues(alpha: 0.92),
                 borderRadius: BorderRadius.circular(26),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+                border: Border.all(color: context.reem.text.withValues(alpha: 0.06)),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.24),
@@ -188,11 +188,11 @@ class _AuthScreenState extends State<AuthScreen> {
               const SizedBox(height: 40),
               const ReemLogo(),
               const SizedBox(height: 12),
-              const Text(
+              Text(
                 'Partage tes vidéos',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: ReemColors.textMuted,
+                  color: context.reem.textMuted,
                   fontSize: 14,
                 ),
               ),
@@ -204,10 +204,10 @@ class _AuthScreenState extends State<AuthScreen> {
                   onTap: _pickImage,
                   child: CircleAvatar(
                     radius: 50,
-                    backgroundColor: ReemColors.surfaceHigh,
+                    backgroundColor: context.reem.surfaceHigh,
                     backgroundImage: _photoBytes != null ? MemoryImage(_photoBytes!) : null,
                     child: _photoBytes == null
-                        ? const Icon(Icons.add_a_photo, color: Colors.white, size: 30)
+                        ? Icon(Icons.add_a_photo, color: context.reem.text, size: 30)
                         : null,
                   ),
                 ),
@@ -217,11 +217,11 @@ class _AuthScreenState extends State<AuthScreen> {
               // Champ Nom
               TextField(
                 controller: _nameController,
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: context.reem.text),
                 decoration: InputDecoration(
                   hintText: 'Nom complet',
-                  hintStyle: const TextStyle(color: ReemColors.textMuted),
-                  prefixIcon: const Icon(Icons.person, color: ReemColors.textMuted),
+                  hintStyle: TextStyle(color: context.reem.textMuted),
+                  prefixIcon: Icon(Icons.person, color: context.reem.textMuted),
                 ),
               ),
               const SizedBox(height: 16),
@@ -229,12 +229,12 @@ class _AuthScreenState extends State<AuthScreen> {
               // Champ Email
               TextField(
                 controller: _emailController,
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: context.reem.text),
                 keyboardType: TextInputType.emailAddress,
                 decoration: InputDecoration(
                   hintText: 'Email',
-                  hintStyle: const TextStyle(color: ReemColors.textMuted),
-                  prefixIcon: const Icon(Icons.email, color: ReemColors.textMuted),
+                  hintStyle: TextStyle(color: context.reem.textMuted),
+                  prefixIcon: Icon(Icons.email, color: context.reem.textMuted),
                 ),
               ),
               const SizedBox(height: 16),
@@ -242,12 +242,12 @@ class _AuthScreenState extends State<AuthScreen> {
               // Champ Mot de passe
               TextField(
                 controller: _passwordController,
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: context.reem.text),
                 obscureText: true,
                 decoration: InputDecoration(
                   hintText: 'Mot de passe',
-                  hintStyle: const TextStyle(color: ReemColors.textMuted),
-                  prefixIcon: const Icon(Icons.lock, color: ReemColors.textMuted),
+                  hintStyle: TextStyle(color: context.reem.textMuted),
+                  prefixIcon: Icon(Icons.lock, color: context.reem.textMuted),
                 ),
               ),
               const SizedBox(height: 16),
@@ -255,12 +255,12 @@ class _AuthScreenState extends State<AuthScreen> {
               // Champ Confirmation mot de passe
               TextField(
                 controller: _confirmPasswordController,
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: context.reem.text),
                 obscureText: true,
                 decoration: InputDecoration(
                   hintText: 'Confirmer le mot de passe',
-                  hintStyle: const TextStyle(color: ReemColors.textMuted),
-                  prefixIcon: const Icon(Icons.lock, color: ReemColors.textMuted),
+                  hintStyle: TextStyle(color: context.reem.textMuted),
+                  prefixIcon: Icon(Icons.lock, color: context.reem.textMuted),
                 ),
               ),
               const SizedBox(height: 24),
@@ -311,14 +311,14 @@ class _AuthScreenState extends State<AuthScreen> {
               const SizedBox(height: 16),
 
               // Séparateur visuel
-              const Row(
+              Row(
                 children: [
-                  Expanded(child: Divider(color: ReemColors.textMuted)),
+                  Expanded(child: Divider(color: context.reem.textMuted)),
                   Padding(
                     padding: EdgeInsets.symmetric(horizontal: 16),
-                    child: Text('OU', style: TextStyle(color: ReemColors.textMuted)),
+                    child: Text('OU', style: TextStyle(color: context.reem.textMuted)),
                   ),
-                  Expanded(child: Divider(color: ReemColors.textMuted)),
+                  Expanded(child: Divider(color: context.reem.textMuted)),
                 ],
               ),
               const SizedBox(height: 16),
@@ -329,8 +329,8 @@ class _AuthScreenState extends State<AuthScreen> {
                     ? null
                     : _continueWithGoogle,
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  side: const BorderSide(color: ReemColors.border),
+                  foregroundColor: context.reem.text,
+                  side: BorderSide(color: context.reem.border),
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -345,11 +345,11 @@ class _AuthScreenState extends State<AuthScreen> {
               ),
               const SizedBox(height: 16),
               if (!GoogleSignInService.isSupportedPlatform)
-                const Padding(
+                Padding(
                   padding: EdgeInsets.only(bottom: 16),
                   child: Text(
                     'Google Sign-In non supporté sur Windows. Testez sur Android, iOS ou Web.',
-                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                    style: TextStyle(color: context.reem.textSecondary, fontSize: 12),
                     textAlign: TextAlign.center,
                   ),
                 ),
@@ -358,9 +358,9 @@ class _AuthScreenState extends State<AuthScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Text(
+                  Text(
                     'Tu as déjà un compte ? ',
-                    style: TextStyle(color: ReemColors.textMuted),
+                    style: TextStyle(color: context.reem.textMuted),
                   ),
                   GestureDetector(
                     onTap: () {
@@ -368,10 +368,10 @@ class _AuthScreenState extends State<AuthScreen> {
                         MaterialPageRoute(builder: (_) => const LoginScreen()),
                       );
                     },
-                    child: const Text(
+                    child: Text(
                       'Connexion',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: context.reem.text,
                         fontWeight: FontWeight.bold,
                       ),
                     ),

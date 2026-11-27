@@ -90,7 +90,7 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
   @override
   Widget build(BuildContext context) {
     final eye = IconButton(
-      icon: Icon(_hidden ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: ReemColors.textMuted),
+      icon: Icon(_hidden ? Icons.visibility_off_outlined : Icons.visibility_outlined, color: context.reem.textMuted),
       onPressed: () => setState(() => _hidden = !_hidden),
     );
 
@@ -104,7 +104,7 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
               TextField(
                 controller: _current,
                 obscureText: _hidden,
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: context.reem.text),
                 decoration: _decoration('Mot de passe actuel', suffix: eye),
               ),
               const SizedBox(height: 12),
@@ -112,14 +112,14 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
             TextField(
               controller: _new,
               obscureText: _hidden,
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: context.reem.text),
               decoration: _decoration('Nouveau mot de passe (8 caractères min.)', suffix: _isGoogleAccount ? eye : null),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _confirm,
               obscureText: _hidden,
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: context.reem.text),
               decoration: _decoration('Confirmer le nouveau mot de passe'),
             ),
             if (_error != null) ...[
@@ -132,7 +132,7 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
       actions: [
         TextButton(
           onPressed: _busy ? null : () => Navigator.pop(context),
-          child: const Text('Annuler', style: TextStyle(color: Colors.white70)),
+          child: Text('Annuler', style: TextStyle(color: context.reem.textSecondary)),
         ),
         ElevatedButton(
           onPressed: _busy ? null : _submit,
@@ -209,23 +209,23 @@ class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Cette action est définitive. Tes vidéos, commentaires, j’aime, abonnés et messages seront supprimés.',
-              style: TextStyle(color: ReemColors.textSecondary, height: 1.4),
+              style: TextStyle(color: context.reem.textSecondary, height: 1.4),
             ),
             const SizedBox(height: 16),
             if (!_isGoogleAccount) ...[
               TextField(
                 controller: _password,
                 obscureText: true,
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: context.reem.text),
                 decoration: _decoration('Ton mot de passe'),
               ),
               const SizedBox(height: 12),
             ],
             TextField(
               controller: _confirmation,
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: context.reem.text),
               decoration: _decoration('Tape SUPPRIMER pour confirmer'),
             ),
             if (_error != null) ...[
@@ -238,7 +238,7 @@ class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
       actions: [
         TextButton(
           onPressed: _busy ? null : () => Navigator.pop(context),
-          child: const Text('Annuler', style: TextStyle(color: Colors.white70)),
+          child: Text('Annuler', style: TextStyle(color: context.reem.textSecondary)),
         ),
         ElevatedButton(
           onPressed: _busy ? null : _submit,

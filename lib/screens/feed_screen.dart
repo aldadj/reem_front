@@ -3,6 +3,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../utils/platform_helper.dart';
 import '../theme/reem_theme.dart';
+import '../utils/media_url.dart';
+import '../services/app_settings.dart';
+import 'settings_screen.dart';
 import 'profile_screen.dart';
 import 'package:http/http.dart' as http;
 // import 'package:image_picker/image_picker.dart'; // Commenté pour désactiver la sélection d'image
@@ -11,11 +14,18 @@ import '../services/auth_service.dart';
 import '../widgets/video_player_item.dart';
 import '../widgets/video_thumbnail.dart';
 import '../widgets/video_search_dialog.dart';
+import 'search_screen.dart';
 import '../models/video.dart' as app_models;
 import 'upload_screen.dart';
 import 'auth_screen.dart';
 import 'login_screen.dart';
 import 'messages_screen.dart';
+
+import 'story_viewer_screen.dart';
+import '../services/story_service.dart';
+import '../widgets/story_bar.dart';
+import '../widgets/reem_nav_bar.dart';
+
 
 class FeedScreen extends StatefulWidget {
   const FeedScreen({super.key});
@@ -27,8 +37,10 @@ class FeedScreen extends StatefulWidget {
 class _FeedScreenState extends State<FeedScreen> {
   List<dynamic> _videos = [];
   List<dynamic> _friendsVideos = [];
+  List<dynamic> _followingVideos = []; // vidéos des comptes que je suis
   List<dynamic> _exploreVideos = [];
   List<dynamic> _userVideos = [];
+  List<StoryGroup> _storyGroups = [];
   bool _isLoading = true;
   bool _isLoadingExplore = false;
   bool _isLoadingUserVideos = false;
@@ -40,18 +52,22 @@ class _FeedScreenState extends State<FeedScreen> {
   int _mobileFeedTabIndex = 2;
   bool _isDesktopMenuOpen = false;
   bool _isSidebarCollapsed = false;
-  bool _isDarkMode = true;
+  
+  // Le mode clair / sombre est global (Paramètres) : on le lit depuis le thème
+  bool get _isDarkMode => Theme.of(context).brightness == Brightness.dark;
   bool _isEnglish = false;
   int _unreadNotificationsCount = 0;
-  final List<String> _recentSearches = [];
+  List<String> get _recentSearches => AppSettings.instance.recentSearches;
   final PageController _feedPageController = PageController();
-  late final PageController _mobileTabsController;
-  final List<PageController> _mobileVideoControllers = [PageController(), PageController(), PageController()];
-  final List<int> _mobileVideoIndices = [0, 0, 0];
+  late PageController _mobileTabsController;
+  bool _tabsControllerAuth = false;
+  final List<PageController> _mobileVideoControllers = [PageController(), PageController(), PageController(), PageController()];
+  final List<int> _mobileVideoIndices = [0, 0, 0, 0];
   final List<ValueNotifier<bool>> _mobileTabVisibility = [
     ValueNotifier<bool>(false),
     ValueNotifier<bool>(false),
     ValueNotifier<bool>(true),
+    ValueNotifier<bool>(false),
   ];
   final ValueNotifier<int> _visibleVideoIndex = ValueNotifier<int>(0);
   final ValueNotifier<bool> _isFeedVisible = ValueNotifier<bool>(true);
@@ -61,14 +77,16 @@ class _FeedScreenState extends State<FeedScreen> {
   @override
   void initState() {
     super.initState();
-    _mobileTabsController = PageController(initialPage: _sessionManager.isAuthenticated ? 2 : 1);
+    _tabsControllerAuth = _sessionManager.isAuthenticated;
+    _mobileTabsController = PageController(initialPage: _tabsControllerAuth ? 2 : 1);
     _fetchVideos();
     _fetchUnreadNotificationsCount();
+    if (_sessionManager.isAuthenticated) _fetchStories();
   }
 
   Future<void> _fetchVideos() async {
     setState(() => _isLoading = true);
-    final String apiUrl = "${AuthService.baseUrl}/videos";
+    final String apiUrl = "${AuthService.baseUrl}/videos?per_page=20";
     try {
       final response = await http.get(
         Uri.parse(apiUrl),
@@ -84,6 +102,7 @@ class _FeedScreenState extends State<FeedScreen> {
           _videos = videos;
           _isLoading = false;
         });
+        _resetFeedPosition(2);
       } else {
         setState(() => _isLoading = false);
       }
@@ -91,6 +110,20 @@ class _FeedScreenState extends State<FeedScreen> {
       print("Erreur lors de la récupération des vidéos : $e");
       setState(() { _isLoading = false; });
     }
+  }
+
+  // Après une actualisation : on revient à la première vidéo et elle se lance toute seule
+  void _resetFeedPosition(int tab) {
+    _mobileVideoIndices[tab] = 0;
+    final isActive = (tab == 2 && _currentBottomIndex == 0 && _mobileFeedTabIndex == 2) ||
+        (tab == 3 && _currentBottomIndex == 0 && _mobileFeedTabIndex == 3) ||
+        (tab == 1 && _currentBottomIndex == 1);
+    if (!isActive) return;
+    _currentIndex = 0;
+    _visibleVideoIndex.value = 0;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_feedPageController.hasClients) _feedPageController.jumpToPage(0);
+    });
   }
 
   Future<void> _fetchUserVideos() async {
@@ -134,15 +167,66 @@ class _FeedScreenState extends State<FeedScreen> {
         setState(() {
           _friendsVideos = videos;
         });
+        _resetFeedPosition(1);
       }
     } catch (e) {
       print('Erreur amis vidéos : $e');
     }
   }
 
+  Future<void> _fetchFollowingVideos() async {
+    if (!_sessionManager.isAuthenticated) {
+      setState(() => _followingVideos = []);
+      return;
+    }
+
+    try {
+      final response = await http.get(
+        Uri.parse('${AuthService.baseUrl}/videos/following'),
+        headers: {'Authorization': 'Bearer ${_sessionManager.authToken}'},
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final videos = List<dynamic>.from(data['data'] ?? []);
+        setState(() {
+          _followingVideos = videos;
+        });
+        _resetFeedPosition(3);
+      }
+    } catch (e) {
+      print('Erreur vidéos suivies : $e');
+    }
+  }
+
+  Future<void> _fetchStories() async {
+    final groups = await StoryService().fetchStories();
+    if (mounted) setState(() => _storyGroups = groups);
+  }
+
+  Future<void> _openStoryViewer(int index) async {
+    _isFeedVisible.value = false;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => StoryViewerScreen(groups: _storyGroups, startGroup: index),
+      ),
+    );
+    if (!mounted) return;
+    _isFeedVisible.value = true;
+    _fetchStories();
+  }
+
+  Future<void> _addStory() async {
+    final posted = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => const UploadScreen(storyMode: true)),
+    );
+    if (posted == true) _fetchStories();
+  }
+
   Future<void> _fetchExploreVideos() async {
     setState(() => _isLoadingExplore = true);
-    final String apiUrl = "${AuthService.baseUrl}/videos";
+    final String apiUrl = "${AuthService.baseUrl}/videos?per_page=40&order=recent";
 
     try {
       final response = await http.get(
@@ -219,8 +303,11 @@ class _FeedScreenState extends State<FeedScreen> {
         break;
       case 1:
         _fetchExploreVideos();
+        if (_sessionManager.isAuthenticated) _fetchStories();
         break;
       case 2:
+        _fetchFollowingVideos();
+        break;
       case 3:
         _fetchFriendsVideos();
         break;
@@ -258,11 +345,16 @@ class _FeedScreenState extends State<FeedScreen> {
       }
     });
     if (index == 0 && _exploreVideos.isEmpty) _fetchExploreVideos();
+    if (index == 0 && _sessionManager.isAuthenticated) _fetchStories();
     if (index == 1 && _friendsVideos.isEmpty) _fetchFriendsVideos();
     if (index == 2 && _videos.isEmpty) _fetchVideos();
+    if (index == 3 && _followingVideos.isEmpty) _fetchFollowingVideos();
   }
 
-  List<int> get _visibleMobileTabIds => _sessionManager.isAuthenticated ? const [0, 1, 2] : const [0, 2];
+  // Accueil : Communauté | Pour toi.  Amis : un écran à part (titre « Amis » seulement)
+  List<int> get _visibleMobileTabIds => _currentBottomIndex == 1
+      ? const [1]
+      : (_sessionManager.isAuthenticated ? const [0, 3, 2] : const [0, 2]);
 
   Future<void> _openLoginScreen() async {
     await Navigator.push(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
@@ -272,49 +364,15 @@ class _FeedScreenState extends State<FeedScreen> {
       _mobileFeedTabIndex = 2;
     });
     _fetchVideos();
+    _fetchFollowingVideos();
     _fetchUnreadNotificationsCount();
+    _fetchStories();
   }
 
   void _showDesktopSettings() {
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text(_isEnglish ? 'General settings' : 'Paramètres généraux'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(_isEnglish ? 'Dark mode' : 'Mode sombre'),
-                value: _isDarkMode,
-                onChanged: (value) {
-                  setState(() => _isDarkMode = value);
-                  setDialogState(() {});
-                },
-              ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(_isEnglish ? 'Language' : 'Langue'),
-                trailing: SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment(value: false, label: Text('FR')),
-                    ButtonSegment(value: true, label: Text('EN')),
-                  ],
-                  selected: {_isEnglish},
-                  onSelectionChanged: (values) {
-                    setState(() => _isEnglish = values.first);
-                    setDialogState(() {});
-                  },
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(_isEnglish ? 'Close' : 'Fermer')),
-          ],
-        ),
-      ),
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => SettingsScreen(onLogout: _logout)),
     );
   }
 
@@ -330,13 +388,12 @@ class _FeedScreenState extends State<FeedScreen> {
   }
 
   Widget _buildDesktopSidebar() {
-    final sidebarColor = _isDarkMode ? ReemColors.sidebar : const Color(0xFFEAF2F9);
-    final textColor = _isDarkMode ? Colors.white : const Color(0xFF171717);
+    final sidebarColor = context.reem.sidebar;
+    final textColor = context.reem.text;
     final navItems = <(IconData, String, int)>[
       (Icons.home_filled, _isEnglish ? 'For you' : 'Pour toi', 0),
-      (Icons.explore_outlined, _isEnglish ? 'Explore' : 'Explorer', 1),
-      if (_sessionManager.isAuthenticated)
-        (Icons.person_add_alt_1_outlined, _isEnglish ? 'Following' : 'Suivi', 2),
+      (Icons.grid_view_rounded, _isEnglish ? 'Community' : 'Communauté', 1),
+      if (_sessionManager.isAuthenticated) (Icons.person_add_alt_1_outlined, _isEnglish ? 'Following' : 'Suivis', 2),
       (Icons.group_outlined, _isEnglish ? 'Friends' : 'Amis', 3),
       (Icons.forum_outlined, _isEnglish ? 'Messages' : 'Messages', 4),
       (Icons.notifications_none, _isEnglish ? 'Activity' : 'Activité', 5),
@@ -408,7 +465,7 @@ class _FeedScreenState extends State<FeedScreen> {
                     dense: true,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     selected: selected,
-                    selectedTileColor: _isDarkMode ? Colors.white.withValues(alpha: 0.09) : const Color(0xFFD8E8F5),
+                    selectedTileColor: context.reem.text.withValues(alpha: 0.08),
                     contentPadding: EdgeInsets.symmetric(horizontal: _isSidebarCollapsed ? 0 : 12),
                     minLeadingWidth: _isSidebarCollapsed ? 0 : 40,
                     horizontalTitleGap: _isSidebarCollapsed ? 0 : 8,
@@ -429,8 +486,8 @@ class _FeedScreenState extends State<FeedScreen> {
               margin: const EdgeInsets.only(bottom: 8),
               padding: const EdgeInsets.symmetric(vertical: 6),
               decoration: BoxDecoration(
-                color: _isDarkMode ? ReemColors.surfaceHigh : Colors.white,
-                border: Border.all(color: _isDarkMode ? Colors.white12 : Colors.black12),
+                color: context.reem.surfaceHigh,
+                border: Border.all(color: context.reem.border),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Column(
@@ -554,42 +611,13 @@ class _FeedScreenState extends State<FeedScreen> {
     }
   }
 
-  // Future<void> _pickAndUploadPhoto() async {
-  //   final picker = ImagePicker();
-  //   final pickedFile = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
-    
-  //   if (pickedFile != null) {
-  //     setState(() => _isUpdatingPhoto = true);
-  //     try {
-  //       final response = await _authService.updateProfilePhoto(
-  //         _sessionManager.authToken!,
-  //         pickedFile.path,
-  //       );
-
-  //       if (response != null && response.containsKey('user')) {
-  //         _sessionManager.setUser(response['user']);
-  //         setState(() {}); // Rafraîchir l'UI avec la nouvelle photo
-  //         ScaffoldMessenger.of(context).showSnackBar(
-  //           const SnackBar(content: Text('Photo de profil mise à jour !')),
-  //         );
-  //       }
-  //       } catch (e) {
-  //         ScaffoldMessenger.of(context).showSnackBar(
-  //           SnackBar(content: Text('Erreur: $e')),
-  //         );
-  //       } finally {
-  //         setState(() => _isUpdatingPhoto = false);
-  //       }
-  //   }
-  // }
-
   @override
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.sizeOf(context).width >= 1120;
     return Theme(
-      data: _isDarkMode ? ReemTheme.dark() : ThemeData.light(useMaterial3: true),
+      data: Theme.of(context),
       child: Scaffold(
-      backgroundColor: _isDarkMode ? ReemColors.background : const Color(0xFFF3F4F6),
+      backgroundColor: context.reem.background,
       extendBodyBehindAppBar: false,
       extendBody: false,
 
@@ -599,25 +627,50 @@ class _FeedScreenState extends State<FeedScreen> {
           ? Row(
               children: [
                 _buildDesktopSidebar(),
-                VerticalDivider(width: 1, color: _isDarkMode ? Colors.white12 : Colors.black12),
+                VerticalDivider(width: 1, color: context.reem.border),
                 Expanded(child: _buildDesktopContent()),
               ],
             )
-          : _currentBottomIndex == 4
-              ? SafeArea(bottom: false, child: _buildProfileScreen())
-              : _currentBottomIndex == 3
-                  ? SafeArea(
-                      bottom: false,
-                      child: MessagesScreen(onUnreadCountChanged: _updateUnreadNotificationsCount),
-                    )
-                  : _buildMobileFeedScreen(),
-
-      bottomNavigationBar: isDesktop ? null : _buildBottomBar(),
+          : Stack(
+              children: [
+                Positioned.fill(
+                  child: _currentBottomIndex == 4
+                      ? SafeArea(
+                          bottom: false,
+                          child: Padding(
+                            padding: EdgeInsets.only(bottom: reemNavInset(context) - 8),
+                            child: _buildProfileScreen(),
+                          ),
+                        )
+                      : _currentBottomIndex == 3
+                          ? SafeArea(
+                              bottom: false,
+                              child: MessagesScreen(
+                                onUnreadCountChanged: _updateUnreadNotificationsCount,
+                                bottomInset: reemNavInset(context),
+                              ),
+                            )
+                          : _buildMobileFeedScreen(),
+                ),
+                // Barre flottante : ne prend plus toute la largeur, fond de verre transparent
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: ReemNavBar(
+                    currentIndex: _currentBottomIndex,
+                    messagesBadge: _unreadNotificationsCount,
+                    onTap: _handleBottomTap,
+                  ),
+                ),
+              ],
+            ),
       ),
     );
   }
 
   void _handleBottomTap(int index) {
+      ReemNavController.hidden.value = false;
       if (index == 2) {
         // Vérifier si l'utilisateur est connecté avant de publier
         if (_sessionManager.isAuthenticated) {
@@ -632,20 +685,25 @@ class _FeedScreenState extends State<FeedScreen> {
           );
         }
       } else {
-        if (index == 0) {
+        if (index == 0 || index == 1) {
+          // On change d'abord l'écran actif : les onglets visibles en dépendent
+          setState(() => _currentBottomIndex = index);
           _isFeedVisible.value = true;
-          for (var tab = 0; tab < _mobileTabVisibility.length; tab++) {
-            _mobileTabVisibility[tab].value = tab == 2;
+          final tab = index == 1 ? 1 : 2;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            final pageIndex = _visibleMobileTabIds.indexOf(tab);
+            if (_mobileTabsController.hasClients && pageIndex >= 0) {
+              _mobileTabsController.jumpToPage(pageIndex);
+            }
+            _activateMobileFeedTab(tab);
+          });
+          // Chaque appui (même sur l'écran déjà ouvert) actualise : ordre aléatoire / amis à jour
+          if (index == 1) {
+            _fetchFriendsVideos();
+          } else {
+            _fetchVideos();
           }
-          _activateMobileFeedTab(2);
-          _fetchVideos();
-        } else if (index == 1) {
-          _isFeedVisible.value = true;
-          for (var tab = 0; tab < _mobileTabVisibility.length; tab++) {
-            _mobileTabVisibility[tab].value = tab == 1;
-          }
-          _activateMobileFeedTab(1);
-          _fetchFriendsVideos();
         } else {
           _isFeedVisible.value = false;
           for (final visibility in _mobileTabVisibility) {
@@ -666,155 +724,30 @@ class _FeedScreenState extends State<FeedScreen> {
       }
   }
 
-  Widget _buildBottomBar() {
-    final bottomInset = MediaQuery.paddingOf(context).bottom;
-
-    Widget navItem(int index, IconData icon, IconData activeIcon, String label, {int badge = 0}) {
-      final selected = _currentBottomIndex == index;
-      return Expanded(
-        child: Semantics(
-          button: true,
-          label: label,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => _handleBottomTap(index),
-            child: SizedBox(
-              height: 58,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      AnimatedScale(
-                        scale: selected ? 1.12 : 1.0,
-                        duration: const Duration(milliseconds: 180),
-                        curve: Curves.easeOutBack,
-                        child: Icon(
-                          selected ? activeIcon : icon,
-                          size: 27,
-                          color: selected ? Colors.white : Colors.white54,
-                        ),
-                      ),
-                      if (badge > 0)
-                        Positioned(
-                          right: -10,
-                          top: -6,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                            constraints: const BoxConstraints(minWidth: 17, minHeight: 17),
-                            decoration: BoxDecoration(
-                              color: ReemColors.like,
-                              borderRadius: BorderRadius.circular(9),
-                              border: Border.all(color: ReemColors.background, width: 1.5),
-                            ),
-                            child: Text(
-                              badge > 99 ? '99+' : '$badge',
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 5),
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    width: selected ? 18 : 0,
-                    height: 3,
-                    decoration: BoxDecoration(
-                      gradient: ReemColors.gradient,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    // Hauteur fixe : sans elle, le bouton + central (Center) prenait tout l'écran
-    return Container(
-      height: 58 + bottomInset,
-      padding: EdgeInsets.only(bottom: bottomInset),
-      decoration: BoxDecoration(
-        color: ReemColors.background,
-        border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.07))),
-      ),
-      child: Row(
-        children: [
-          navItem(0, Icons.home_outlined, Icons.home_rounded, 'Accueil'),
-          navItem(1, Icons.group_outlined, Icons.group_rounded, 'Ami(e)s'),
-          Expanded(
-            child: Semantics(
-              button: true,
-              label: 'Publier une vidéo',
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => _handleBottomTap(2),
-                child: Center(
-                  child: Container(
-                    width: 54,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      gradient: ReemColors.gradient,
-                      borderRadius: BorderRadius.circular(13),
-                      boxShadow: [
-                        BoxShadow(
-                          color: ReemColors.accent.withValues(alpha: 0.4),
-                          blurRadius: 14,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: const Icon(Icons.add_rounded, color: Colors.white, size: 28),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          navItem(3, Icons.chat_bubble_outline_rounded, Icons.chat_bubble_rounded, 'Messages', badge: _unreadNotificationsCount),
-          navItem(4, Icons.person_outline_rounded, Icons.person_rounded, 'Profil'),
-        ],
-      ),
-    );
-  }
-
   Widget _buildMobileFeedScreen() {
+    if (_tabsControllerAuth != _sessionManager.isAuthenticated) {
+      _tabsControllerAuth = _sessionManager.isAuthenticated;
+      final old = _mobileTabsController;
+      _mobileTabsController = PageController(initialPage: _tabsControllerAuth ? 2 : 1);
+      _mobileFeedTabIndex = 2;
+      WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+    }
     final visibleTabs = _visibleMobileTabIds;
     final tabLabels = {
       0: 'Communauté',
-      1: 'Suivis',
+      1: 'Amis',
+      3: 'Suivis',
       2: 'Pour toi',
     };
     return Stack(
       children: [
         Positioned.fill(
           child: PageView.builder(
+            key: ValueKey('tabs_${_currentBottomIndex == 1 ? 'amis' : 'accueil'}_${_sessionManager.isAuthenticated}'),
             controller: _mobileTabsController,
             itemCount: visibleTabs.length,
             onPageChanged: (page) => _activateMobileFeedTab(visibleTabs[page]),
             itemBuilder: (context, page) => _buildMobileVideoPage(visibleTabs[page]),
-          ),
-        ),
-        // Dégradé haut : onglets lisibles sur n'importe quelle vidéo
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          child: IgnorePointer(
-            child: Container(
-              height: MediaQuery.paddingOf(context).top + 96,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Colors.black.withValues(alpha: 0.55), Colors.transparent],
-                ),
-              ),
-            ),
           ),
         ),
         Positioned(
@@ -842,10 +775,12 @@ class _FeedScreenState extends State<FeedScreen> {
                               AnimatedDefaultTextStyle(
                                 duration: const Duration(milliseconds: 180),
                                 style: TextStyle(
-                                  color: selected ? Colors.white : Colors.white60,
+                                  color: (_currentBottomIndex == 0 && _mobileFeedTabIndex == 0)
+                                      ? (selected ? context.reem.text : context.reem.textMuted)
+                                      : (selected ? Colors.white : Colors.white60),
                                   fontSize: selected ? 17 : 16,
                                   fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                                  shadows: reemTextShadow,
+                                  shadows: (_currentBottomIndex == 0 && _mobileFeedTabIndex == 0) ? null : reemTextShadow,
                                 ),
                                 child: Text(tabLabels[tab]!),
                               ),
@@ -873,7 +808,12 @@ class _FeedScreenState extends State<FeedScreen> {
                   child: IconButton(
                     tooltip: 'Rechercher une vidéo',
                     onPressed: _searchVideos,
-                    icon: const Icon(Icons.search_rounded, color: Colors.white, size: 28, shadows: reemTextShadow),
+                    icon: Icon(
+                      Icons.search_rounded,
+                      color: (_currentBottomIndex == 0 && _mobileFeedTabIndex == 0) ? context.reem.text : Colors.white,
+                      size: 28,
+                      shadows: (_currentBottomIndex == 0 && _mobileFeedTabIndex == 0) ? null : reemTextShadow,
+                    ),
                   ),
                 ),
               ],
@@ -885,9 +825,12 @@ class _FeedScreenState extends State<FeedScreen> {
   }
 
   Widget _buildMobileVideoPage(int tab) {
+    if (tab == 0) return _buildCommunityGrid(overlayTop: true);
+
     final videos = switch (tab) {
       0 => _exploreVideos,
       1 => _friendsVideos,
+      3 => _followingVideos,
       _ => _videos,
     };
     final isLoading = switch (tab) {
@@ -896,9 +839,9 @@ class _FeedScreenState extends State<FeedScreen> {
       _ => _isLoading,
     };
     if (isLoading) {
-      return const Center(child: CircularProgressIndicator(color: Color(0xFF7C9BFF)));
+      return const Center(child: CircularProgressIndicator(color: Color(0xFF8F55FF)));
     }
-    if (videos.isEmpty) return _buildEmptyState();
+    if (videos.isEmpty) return _buildEmptyState(friends: tab == 1, following: tab == 3);
 
     return PageView.builder(
       controller: _mobileVideoControllers[tab],
@@ -909,6 +852,7 @@ class _FeedScreenState extends State<FeedScreen> {
         if (tab == _mobileFeedTabIndex) _visibleVideoIndex.value = index;
       },
       itemBuilder: (context, index) => VideoPlayerItem(
+        isFeedItem: true,
         video: _toVideoModel(Map<String, dynamic>.from(videos[index] as Map)),
         feedVisible: _mobileTabVisibility[tab],
         visibleVideoIndex: _visibleVideoIndex,
@@ -930,10 +874,27 @@ class _FeedScreenState extends State<FeedScreen> {
   Widget _buildDesktopContent() {
     switch (_desktopSection) {
       case 1:
-        return _buildFeedScreen(forceExplore: true);
+        return _buildCommunityGrid(overlayTop: false);
       case 2:
       case 3:
-        return _buildFeedScreen();
+        return Stack(
+          children: [
+            _buildFeedScreen(),
+            Positioned(
+              top: 14,
+              left: 0,
+              right: 0,
+              child: IgnorePointer(
+                child: Center(
+                  child: Text(
+                    _desktopSection == 2 ? 'Suivis' : 'Amis',
+                    style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800, shadows: reemTextShadow),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
       case 4:
       case 5:
         return MessagesScreen(onUnreadCountChanged: _updateUnreadNotificationsCount);
@@ -946,13 +907,13 @@ class _FeedScreenState extends State<FeedScreen> {
 
   Widget _buildFeedScreen({bool forceExplore = false}) {
     if (forceExplore ? _isLoadingExplore : _isLoading) {
-      return const Center(child: CircularProgressIndicator(color: Color(0xFF7C9BFF)));
+      return const Center(child: CircularProgressIndicator(color: Color(0xFF8F55FF)));
     }
 
     final List<dynamic> sourceVideos = forceExplore
         ? _exploreVideos
         : _currentBottomIndex == 1
-            ? _friendsVideos
+            ? (_desktopSection == 2 ? _followingVideos : _friendsVideos)
             : _videos;
 
     if (sourceVideos.isEmpty) {
@@ -965,9 +926,9 @@ class _FeedScreenState extends State<FeedScreen> {
         onRefresh: forceExplore
           ? _fetchExploreVideos
           : _currentBottomIndex == 1
-            ? _fetchFriendsVideos
+            ? (_desktopSection == 2 ? _fetchFollowingVideos : _fetchFriendsVideos)
             : _fetchVideos,
-      color: const Color(0xFF7C9BFF),
+      color: const Color(0xFF8F55FF),
       child: PageView.builder(
         controller: _feedPageController,
         scrollDirection: Axis.vertical,
@@ -981,6 +942,7 @@ class _FeedScreenState extends State<FeedScreen> {
         itemBuilder: (context, index) {
           final video = shuffledVideos[index];
           return VideoPlayerItem(
+            isFeedItem: true,
             video: _toVideoModel(video),
             feedVisible: _isFeedVisible,
             visibleVideoIndex: _visibleVideoIndex,
@@ -1022,6 +984,8 @@ class _FeedScreenState extends State<FeedScreen> {
       title: video['title'] ?? '',
       description: video['description'],
       username: video['user'] != null ? video['user']['name'] : 'Anonyme',
+      authorProfilePhotoUrl: video['user'] != null ? video['user']['profile_photo_path']?.toString() : null,
+      isAuthorFollowed: video['author_is_followed'] == true,
       authorId: video['user'] != null ? video['user']['id'] ?? 0 : 0,
       likesCount: video['likes_count'] ?? 0,
       commentsCount: video['comments_count'] ?? 0,
@@ -1035,45 +999,12 @@ class _FeedScreenState extends State<FeedScreen> {
     for (final visibility in _mobileTabVisibility) {
       visibility.value = false;
     }
-    final result = await showDialog<Map<String, dynamic>?>(
-      context: context,
-      barrierDismissible: true,
-      builder: (context) => VideoSearchDialog(
-        token: _sessionManager.authToken,
-        recentSearches: List<String>.unmodifiable(_recentSearches),
-        onSearchSubmitted: (query) {
-          setState(() {
-            _recentSearches.removeWhere((item) => item.toLowerCase() == query.toLowerCase());
-            _recentSearches.insert(0, query);
-            if (_recentSearches.length > 8) _recentSearches.removeLast();
-          });
-        },
-        onRemoveSearch: (query) => setState(() {
-          _recentSearches.removeWhere((item) => item.toLowerCase() == query.toLowerCase());
-        }),
-        onClearSearches: () => setState(_recentSearches.clear),
-      ),
-    );
-    if (!mounted) return;
-    if (result == null) {
-      _isFeedVisible.value = true;
-      _mobileTabVisibility[_mobileFeedTabIndex].value = true;
-      return;
-    }
 
-    final searchVideoVisible = ValueNotifier<bool>(true);
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => VideoPlayerItem(
-          video: _toVideoModel(result),
-          feedVisible: searchVideoVisible,
-        ),
-      ),
-    );
-    searchVideoVisible.dispose();
-    if (mounted) {
-      _isFeedVisible.value = true;
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => const SearchScreen()));
+
+    if (!mounted) return;
+    _isFeedVisible.value = true;
+    if (_currentBottomIndex == 0 || _currentBottomIndex == 1) {
       _mobileTabVisibility[_mobileFeedTabIndex].value = true;
     }
   }
@@ -1139,10 +1070,10 @@ class _FeedScreenState extends State<FeedScreen> {
             children: [
               const Icon(Icons.person_outline, size: 80, color: Colors.grey),
               const SizedBox(height: 24),
-              const Text(
+              Text(
                 "Inscrivez-vous pour voir votre profil",
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                style: TextStyle(color: context.reem.text, fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 12),
               const Text(
@@ -1154,18 +1085,21 @@ class _FeedScreenState extends State<FeedScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
                   onPressed: () {
                     Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => const AuthScreen()),
                     );
                   },
-                  child: const Text("S'inscrire / Se connecter", style: TextStyle(fontWeight: FontWeight.bold)),
+                  child: const Text("S'inscrire / Se connecter"),
                 ),
+              ),
+              const SizedBox(height: 10),
+              TextButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => SettingsScreen(onLogout: _logout)),
+                ),
+                icon: const Icon(Icons.settings_outlined, size: 20),
+                label: const Text('Paramètres'),
               ),
             ],
           ),
@@ -1197,8 +1131,8 @@ class _FeedScreenState extends State<FeedScreen> {
           // Nom utilisateur
           Text(
             user?['name'] ?? 'Utilisateur',
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: context.reem.text,
               fontSize: 24,
               fontWeight: FontWeight.bold,
             ),
@@ -1234,14 +1168,14 @@ class _FeedScreenState extends State<FeedScreen> {
                   child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     decoration: BoxDecoration(
-                      color: _profileTabIndex == 0 ? Colors.white : Colors.white12,
+                      color: _profileTabIndex == 0 ? context.reem.text : context.reem.border,
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
                       'Publications',
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        color: _profileTabIndex == 0 ? Colors.black : Colors.white,
+                        color: _profileTabIndex == 0 ? Colors.black : context.reem.text,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -1260,14 +1194,14 @@ class _FeedScreenState extends State<FeedScreen> {
                   child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     decoration: BoxDecoration(
-                      color: _profileTabIndex == 1 ? Colors.white : Colors.white12,
+                      color: _profileTabIndex == 1 ? context.reem.text : context.reem.border,
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
                       'Explorer',
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        color: _profileTabIndex == 1 ? Colors.black : Colors.white,
+                        color: _profileTabIndex == 1 ? Colors.black : context.reem.text,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -1299,7 +1233,7 @@ class _FeedScreenState extends State<FeedScreen> {
             width: double.infinity,
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.white,
+                backgroundColor: context.reem.text,
                 foregroundColor: Colors.black,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
@@ -1467,6 +1401,8 @@ class _FeedScreenState extends State<FeedScreen> {
                         title: video['title'] ?? '',
                         description: video['description'],
                         username: video['user'] != null ? video['user']['name'] : 'Anonyme',
+                        authorProfilePhotoUrl: video['user'] != null ? video['user']['profile_photo_path']?.toString() : null,
+                        isAuthorFollowed: video['author_is_followed'] == true,
                         authorId: video['user'] != null ? video['user']['id'] ?? 0 : 0,
                         likesCount: video['likes_count'] ?? 0,
                         commentsCount: video['comments_count'] ?? 0,
@@ -1485,38 +1421,177 @@ class _FeedScreenState extends State<FeedScreen> {
     );
   }
 
-  Widget _buildEmptyState() {
+  // Communauté : stories en haut, puis vidéos en grille, 2 par ligne (plus sur grand écran),
+  // avec le compte, les j'aime et les commentaires sous chaque vidéo.
+  Widget _buildCommunityGrid({required bool overlayTop}) {
+    if (_isLoadingExplore && _exploreVideos.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_exploreVideos.isEmpty) return _buildEmptyState();
+
+    const topPadding = 8.0;
+
+    return Column(
+      children: [
+        SizedBox(height: overlayTop ? MediaQuery.paddingOf(context).top + 56 : 0),
+        if (_sessionManager.isAuthenticated)
+          StoryBar(groups: _storyGroups, onOpen: _openStoryViewer, onAdd: _addStory),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final columns = constraints.maxWidth >= 1000 ? 4 : constraints.maxWidth >= 640 ? 3 : 2;
+              return RefreshIndicator(
+                onRefresh: () async {
+                  await _fetchExploreVideos();
+                  if (_sessionManager.isAuthenticated) await _fetchStories();
+                },
+                edgeOffset: topPadding,
+                child: GridView.builder(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: EdgeInsets.fromLTRB(10, topPadding, 10, reemNavInset(context) + 12),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: columns,
+                    mainAxisSpacing: 14,
+                    crossAxisSpacing: 10,
+                    childAspectRatio: 0.6,
+                  ),
+                  itemCount: _exploreVideos.length,
+                  itemBuilder: (context, index) => _buildCommunityTile(
+                    Map<String, dynamic>.from(_exploreVideos[index] as Map),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  String? _gridThumbnailUrl(Map<String, dynamic> video) {
+    final raw = (video['thumbnail_path'] ?? '').toString();
+    if (raw.isNotEmpty) return absoluteMediaUrl(raw);
+
+    final path = (video['video_path'] ?? '').toString();
+    if (path.contains('/video/upload/')) {
+      return path
+          .replaceFirst('/video/upload/', '/video/upload/so_0,w_480,h_800,c_fill,q_auto/')
+          .replaceFirst(RegExp(r'\.(mp4|mov|avi|mkv|webm)$', caseSensitive: false), '.jpg');
+    }
+    return null;
+  }
+
+  void _openGridVideo(Map<String, dynamic> video) {
+    final visible = ValueNotifier<bool>(true);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          backgroundColor: Colors.black,
+          body: VideoPlayerItem(video: _toVideoModel(video), feedVisible: visible),
+        ),
+      ),
+    ).then((_) => visible.dispose());
+  }
+
+  Widget _buildCommunityTile(Map<String, dynamic> video) {
+    final thumbnail = _gridThumbnailUrl(video);
+    final user = video['user'] is Map ? video['user'] as Map : const {};
+    final name = (user['name'] ?? 'Anonyme').toString();
+    final likes = video['likes_count'] ?? 0;
+    final comments = video['comments_count'] ?? 0;
+
+    return GestureDetector(
+      onTap: () => _openGridVideo(video),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ColoredBox(color: context.reem.surface),
+                  VideoThumbnail(
+                      thumbnailUrl: thumbnail ?? '',
+                      videoUrl: (video['video_path'] ?? '').toString(),
+                    ),
+                  const Center(
+                    child: Icon(Icons.play_circle_fill_rounded, color: Colors.white70, size: 42),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 7),
+          Text(
+            '@$name',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: context.reem.text, fontSize: 13.5, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 3),
+          Row(
+            children: [
+              const Icon(Icons.favorite_rounded, color: ReemColors.like, size: 15),
+              const SizedBox(width: 4),
+              Text('$likes', style: TextStyle(color: context.reem.textSecondary, fontSize: 12.5)),
+              const SizedBox(width: 14),
+              Icon(Icons.chat_bubble_rounded, color: context.reem.textMuted, size: 14),
+              const SizedBox(width: 4),
+              Text('$comments', style: TextStyle(color: context.reem.textSecondary, fontSize: 12.5)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState({bool friends = false, bool following = false}) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(28),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              width: 72,
-              height: 72,
+              width: 76,
+              height: 76,
               decoration: BoxDecoration(
-                color: const Color(0xFF121B2D),
+                gradient: ReemColors.gradient,
                 borderRadius: BorderRadius.circular(24),
               ),
-              child: const Icon(Icons.videocam_outlined, color: Color(0xFF7C9BFF), size: 34),
+              child: Icon(friends ? Icons.group_rounded : (following ? Icons.person_add_alt_1_rounded : Icons.videocam_rounded), color: Colors.white, size: 38),
             ),
-            const SizedBox(height: 18),
-            const Text("Aucune vidéo disponible.", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            const Text("Publiez une première vidéo pour alimenter votre fil.", textAlign: TextAlign.center, style: TextStyle(color: Colors.white54, fontSize: 13)),
             const SizedBox(height: 20),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7C9BFF)),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const UploadScreen()),
-                ).then((_) => _fetchVideos());
-              },
-              icon: const Icon(Icons.add, color: Colors.white),
-              label: const Text("Publier une vidéo", style: TextStyle(color: Colors.white)),
-            )
+            Text(
+              friends ? 'Pas encore de vidéos d’amis' : (following ? 'Rien à voir pour l’instant' : 'Aucune vidéo disponible.'),
+              textAlign: TextAlign.center,
+              style: TextStyle(color: context.reem.text, fontSize: 18, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              friends
+                  ? 'Tes amis sont les personnes que tu suis et qui te suivent aussi. Abonne-toi à des comptes pour en trouver.'
+                  : (following
+                      ? 'Abonne-toi à des créateurs : leurs vidéos apparaîtront ici, et seulement les leurs.'
+                      : 'Publie une première vidéo pour alimenter ton fil.'),
+              textAlign: TextAlign.center,
+              style: TextStyle(color: context.reem.textSecondary, height: 1.4),
+            ),
+            const SizedBox(height: 22),
+            if (!friends && !following)
+              ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const UploadScreen()),
+                  ).then((_) => _fetchVideos());
+                },
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('Publier une vidéo'),
+              ),
           ],
         ),
       ),
@@ -1578,9 +1653,9 @@ class _VideoSearchDelegate extends SearchDelegate<Map<String, dynamic>?> {
   @override
   ThemeData appBarTheme(BuildContext context) => Theme.of(context).copyWith(
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF0B1A2E),
+        scaffoldBackgroundColor: const Color(0xFF0B0714),
         appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF0B1020),
+          backgroundColor: Color(0xFF0F0A1C),
           foregroundColor: Colors.white,
         ),
         inputDecorationTheme: const InputDecorationTheme(
@@ -1626,7 +1701,7 @@ class _VideoSearchDelegate extends SearchDelegate<Map<String, dynamic>?> {
         }
         return ListView.separated(
           itemCount: matches.length,
-          separatorBuilder: (_, _) => const Divider(color: Colors.white12, height: 1),
+          separatorBuilder: (_, __) => const Divider(color: Colors.white12, height: 1),
           itemBuilder: (context, index) {
             final video = Map<String, dynamic>.from(matches[index] as Map);
             final author = video['user'] is Map ? video['user']['name'] : 'Anonyme';
@@ -1694,7 +1769,7 @@ class _VideoSearchDelegate extends SearchDelegate<Map<String, dynamic>?> {
             ),
           ),
           title: Text((video['title'] ?? 'Sans titre').toString(), style: const TextStyle(color: Colors.white)),
-          subtitle: Text('Appuyez pour ouvrir', style: const TextStyle(color: Colors.white60)),
+          subtitle: const Text('Appuyez pour ouvrir', style: TextStyle(color: Colors.white60)),
           onTap: () => close(context, video),
         );
       },

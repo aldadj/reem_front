@@ -7,13 +7,13 @@ import '../screens/auth_screen.dart';
 import '../services/auth_service.dart';
 import '../services/session_manager.dart';
 
-/// Commentaires d'une vidéo : réponses (un niveau) et likes de commentaires.
+/// Commentaires d'une vidéo : réponses (un niveau), likes et suppression.
 ///
 /// API attendue :
-///  - GET  /videos/{id}/comments        -> liste (avec `replies` imbriquées OU `parent_id`),
-///                                         chaque commentaire : likes_count, liked_by_user
-///  - POST /videos/{id}/comments        -> {comment, parent_id?}  (201)
-///  - POST /comments/{id}/like          -> {liked, likes_count}
+///  - GET    /videos/{id}/comments   -> liste (avec `replies` imbriquées OU `parent_id`)
+///  - POST   /videos/{id}/comments   -> {comment, parent_id?}  (201)
+///  - POST   /comments/{id}/like     -> {liked, likes_count}
+///  - DELETE /comments/{id}          -> 200
 class VideoCommentsPanel extends StatefulWidget {
   const VideoCommentsPanel({
     super.key,
@@ -21,10 +21,15 @@ class VideoCommentsPanel extends StatefulWidget {
     required this.onClose,
     required this.onCountChanged,
     this.highlightCommentId,
+    this.videoOwnerId,
   });
 
   /// Commentaire à faire défiler et surligner à l'ouverture (depuis une notification)
   final int? highlightCommentId;
+
+  /// Auteur de la vidéo : il peut supprimer tous les commentaires de sa vidéo
+  final Object? videoOwnerId;
+
   final int videoId;
   final VoidCallback onClose;
   final ValueChanged<int> onCountChanged;
@@ -174,10 +179,10 @@ class _VideoCommentsPanelState extends State<VideoCommentsPanel> {
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final context = _keys[target]?.currentContext;
-      if (context != null) {
+      final ctx = _keys[target]?.currentContext;
+      if (ctx != null) {
         Scrollable.ensureVisible(
-          context,
+          ctx,
           duration: const Duration(milliseconds: 450),
           alignment: 0.25,
           curve: Curves.easeOutCubic,
@@ -279,6 +284,61 @@ class _VideoCommentsPanelState extends State<VideoCommentsPanel> {
     }
   }
 
+  // L'auteur du commentaire ou le propriétaire de la vidéo peuvent supprimer
+  bool _canDelete(Map<String, dynamic> comment) {
+    final me = _sessionManager.currentUser?['id'];
+    if (me == null) return false;
+    final authorId = (comment['user'] as Map?)?['id'] ?? comment['user_id'];
+    final owner = widget.videoOwnerId;
+    return '$authorId' == '$me' || (owner != null && '$owner' == '$me');
+  }
+
+  Future<void> _deleteComment(Map<String, dynamic> comment, int rootId) async {
+    final id = _asInt(comment['id']);
+    if (id == null) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Supprimer ce commentaire ?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Annuler'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Supprimer', style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    try {
+      final r = await http.delete(
+        Uri.parse('${AuthService.baseUrl}/comments/$id'),
+        headers: _headers(),
+      );
+      if (r.statusCode != 200 && r.statusCode != 204) throw Exception();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Impossible de supprimer ce commentaire.')),
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      if (id == rootId) {
+        _comments.removeWhere((c) => _asInt(c['id']) == id);
+        _replies.remove(id);
+      } else {
+        _replies[rootId]?.removeWhere((c) => _asInt(c['id']) == id);
+      }
+    });
+    widget.onCountChanged(_total);
+  }
+
   Future<void> _toggleCommentLike(Map<String, dynamic> comment) async {
     if (!_sessionManager.isAuthenticated) {
       _goToAuth();
@@ -354,83 +414,104 @@ class _VideoCommentsPanelState extends State<VideoCommentsPanel> {
       duration: const Duration(milliseconds: 400),
       color: highlighted ? Colors.white.withValues(alpha: 0.14) : Colors.transparent,
       child: Padding(
-      padding: EdgeInsets.fromLTRB(isReply ? 56 : 16, 8, 8, 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          CircleAvatar(
-            radius: isReply ? 13 : 18,
-            backgroundColor: Colors.white12,
-            child: Text(
-              name.isNotEmpty ? name[0].toUpperCase() : '?',
-              style: TextStyle(color: Colors.white, fontSize: isReply ? 11 : 14),
+        padding: EdgeInsets.fromLTRB(isReply ? 56 : 16, 8, 8, 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CircleAvatar(
+              radius: isReply ? 13 : 18,
+              backgroundColor: Colors.white12,
+              child: Text(
+                name.isNotEmpty ? name[0].toUpperCase() : '?',
+                style: TextStyle(color: Colors.white, fontSize: isReply ? 11 : 14),
+              ),
             ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Colors.white70, fontSize: 13),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.white70, fontSize: 13),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _timeAgo(comment['created_at']?.toString()),
-                      style: const TextStyle(color: Colors.white38, fontSize: 11),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  comment['comment']?.toString() ?? '',
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
-                ),
-                const SizedBox(height: 2),
-                GestureDetector(
-                  onTap: () => _startReply(comment, rootId),
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 4),
-                    child: Text(
-                      'Répondre',
-                      style: TextStyle(
-                        color: Colors.white54,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
+                      const SizedBox(width: 8),
+                      Text(
+                        _timeAgo(comment['created_at']?.toString()),
+                        style: const TextStyle(color: Colors.white38, fontSize: 11),
                       ),
-                    ),
+                    ],
                   ),
+                  const SizedBox(height: 4),
+                  Text(
+                    comment['comment']?.toString() ?? '',
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      GestureDetector(
+                        onTap: () => _startReply(comment, rootId),
+                        child: const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 4),
+                          child: Text(
+                            'Répondre',
+                            style: TextStyle(
+                              color: Colors.white54,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (_canDelete(comment)) ...[
+                        const SizedBox(width: 16),
+                        GestureDetector(
+                          onTap: () => _deleteComment(comment, rootId),
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 4),
+                            child: Text(
+                              'Supprimer',
+                              style: TextStyle(
+                                color: Colors.redAccent,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Column(
+              children: [
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: liked ? 'Je n’aime plus' : 'J’aime',
+                  icon: Icon(
+                    liked ? Icons.favorite : Icons.favorite_border,
+                    color: liked ? Colors.redAccent : Colors.white54,
+                    size: 20,
+                  ),
+                  onPressed: () => _toggleCommentLike(comment),
+                ),
+                Text(
+                  likes > 0 ? '$likes' : '',
+                  style: const TextStyle(color: Colors.white54, fontSize: 11),
                 ),
               ],
             ),
-          ),
-          Column(
-            children: [
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                tooltip: liked ? 'Je n’aime plus' : 'J’aime',
-                icon: Icon(
-                  liked ? Icons.favorite : Icons.favorite_border,
-                  color: liked ? Colors.redAccent : Colors.white54,
-                  size: 20,
-                ),
-                onPressed: () => _toggleCommentLike(comment),
-              ),
-              Text(
-                likes > 0 ? '$likes' : '',
-                style: const TextStyle(color: Colors.white54, fontSize: 11),
-              ),
-            ],
-          ),
-        ],
-      ),
+          ],
+        ),
       ),
     );
   }

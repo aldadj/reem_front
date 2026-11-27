@@ -11,6 +11,7 @@ import 'package:photo_manager/photo_manager.dart';
 import 'publish_launcher.dart';
 import '../services/video_edit_service.dart';
 import '../theme/reem_theme.dart';
+import 'story_preview_screen.dart';
 
 enum _CaptureMode { video, photo }
 
@@ -19,14 +20,15 @@ enum _CaptureMode { video, photo }
 ///  - en bas, une ligne avec les vidéos du téléphone (le « + » ouvre toute la galerie) ;
 ///  - après le tournage ou l'import, l'éditeur s'ouvre et la vidéo démarre seule.
 class UploadScreen extends StatefulWidget {
-  const UploadScreen({super.key});
+  const UploadScreen({super.key, this.storyMode = false});
+final bool storyMode;
 
   @override
   State<UploadScreen> createState() => _UploadScreenState();
 }
 
 class _UploadScreenState extends State<UploadScreen> with WidgetsBindingObserver {
-  static const int _maxSeconds = 60;
+  int get _maxSeconds => widget.storyMode ? 30 : 60;
   static const int _maxItems = 12;
   static const int _pageSize = 24;
   static const _videoExtensions = {'mp4', 'mov', 'avi', 'mkv', 'm4v', '3gp', 'webm'};
@@ -51,15 +53,14 @@ class _UploadScreenState extends State<UploadScreen> with WidgetsBindingObserver
   String _processingLabel = 'Création de la vidéo…';
 
   // Galerie du téléphone
-  AssetPathEntity? _videoAlbum;
-  List<AssetEntity> _assets = [];
+  AssetEntity? _latestAsset; // dernière photo / vidéo : miniature du bouton Galerie
   bool _galleryDenied = false;
 
   bool get _supportsCamera {
-    return !kIsWeb &&
-        (defaultTargetPlatform == TargetPlatform.android ||
-            defaultTargetPlatform == TargetPlatform.iOS ||
-            defaultTargetPlatform == TargetPlatform.windows);
+    return kIsWeb ||
+        defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.windows;
   }
 
   bool get _supportsGallery {
@@ -103,6 +104,16 @@ class _UploadScreenState extends State<UploadScreen> with WidgetsBindingObserver
       _initializeCamera();
     }
   }
+
+void _openNext({String? videoPath, Uint8List? videoBytes, String? fileName, bool isImage = false}) {
+  if (widget.storyMode) {
+    Navigator.push(context, MaterialPageRoute(
+      builder: (_) => StoryPreviewScreen(path: videoPath, bytes: videoBytes, fileName: fileName, isVideo: !isImage),
+    )).then((posted) { if (posted == true && mounted) Navigator.pop(context, true); });
+    return;
+  }
+  openPublishScreen(context: context, videoPath: videoPath, videoBytes: videoBytes, fileName: fileName);
+}
 
   void _showMessage(String message) {
     if (!mounted) return;
@@ -237,7 +248,17 @@ class _UploadScreenState extends State<UploadScreen> with WidgetsBindingObserver
         _isRecording = false;
         _seconds = 0;
       });
-      openPublishScreen(context: context, videoPath: file.path);
+      if (kIsWeb) {
+        final bytes = await file.readAsBytes();
+        if (!mounted) return;
+        openPublishScreen(
+          context: context,
+          videoBytes: bytes,
+          fileName: 'reem_${DateTime.now().millisecondsSinceEpoch}.webm',
+        );
+      } else {
+        _openNext( videoPath: file.path);
+      }
     } catch (e) {
       if (mounted) {
         setState(() => _isRecording = false);
@@ -259,13 +280,14 @@ class _UploadScreenState extends State<UploadScreen> with WidgetsBindingObserver
     try {
       final picture = await controller.takePicture();
       if (!mounted) return;
+      if (widget.storyMode) { _openNext(videoPath: picture.path, isImage: true); return; }
       setState(() {
         _processingLabel = 'Préparation de la photo…';
         _isProcessing = true;
       });
       final path = await _videoEditService.createSlideshow([picture.path]);
       if (!mounted) return;
-      openPublishScreen(context: context, videoPath: path);
+      _openNext( videoPath: path);
     } catch (e) {
       _showMessage('Photo impossible : $e');
     } finally {
@@ -286,59 +308,48 @@ class _UploadScreenState extends State<UploadScreen> with WidgetsBindingObserver
         return;
       }
 
-      final albums = await PhotoManager.getAssetPathList(
-        type: RequestType.video,
-        onlyAll: true,
-      );
-      if (albums.isEmpty) {
-        if (mounted) setState(() => _assets = []);
-        return;
-      }
+      final albums = await PhotoManager.getAssetPathList(type: RequestType.common, onlyAll: true);
+      if (albums.isEmpty) return;
 
-      final first = await albums.first.getAssetListPaged(page: 0, size: _pageSize);
+      final latest = await albums.first.getAssetListPaged(page: 0, size: 1);
       if (!mounted) return;
       setState(() {
         _galleryDenied = false;
-        _videoAlbum = albums.first;
-        _assets = first;
+        _latestAsset = latest.isNotEmpty ? latest.first : null;
       });
     } catch (_) {
       if (mounted) setState(() => _galleryDenied = true);
     }
   }
 
-  Future<void> _askGalleryAccess() async {
+  Future<bool> _ensureGalleryAccess() async {
     final permission = await PhotoManager.requestPermissionExtend();
     if (permission.hasAccess) {
-      await _loadGallery();
-    } else {
-      await PhotoManager.openSetting();
+      if (_galleryDenied || _latestAsset == null) await _loadGallery();
+      return true;
     }
+    await PhotoManager.openSetting();
+    return false;
   }
 
-  Future<void> _openGallerySheet() async {
+  // Bouton Galerie (à gauche, comme un appareil photo) : photos et vidéos du téléphone
+  Future<void> _openGallery() async {
     if (_isRecording || _isProcessing) return;
 
     if (!_supportsGallery) {
       await _importFromFiles();
       return;
     }
-    if (_galleryDenied || _videoAlbum == null) {
-      await _askGalleryAccess();
-      if (_videoAlbum == null) return;
-    }
-    if (!mounted) return;
+    if (!await _ensureGalleryAccess() || !mounted) return;
 
     final result = await showModalBottomSheet<_PickerResult>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: ReemColors.background,
-      builder: (_) => _GalleryPickerSheet(
-        album: _videoAlbum!,
-        firstPage: _assets,
-        pageSize: _pageSize,
-        maxItems: _maxItems,
+      builder: (_) => Theme(
+        data: ReemTheme.dark(),
+        child: _GalleryPickerSheet(maxItems: widget.storyMode ? 1 : _maxItems),
       ),
     );
     if (!mounted || result == null) return;
@@ -352,31 +363,49 @@ class _UploadScreenState extends State<UploadScreen> with WidgetsBindingObserver
 
   Future<void> _importAssets(List<AssetEntity> assets) async {
     if (_isProcessing) return;
+    if (widget.storyMode) assets = assets.take(1).toList();
     setState(() {
       _processingLabel = 'Préparation…';
       _isProcessing = true;
     });
     try {
       final paths = <String>[];
+      var videoCount = 0;
       for (final asset in assets) {
-        final file = await asset.originFile;
-        if (file != null) paths.add(file.path);
+        final isVideo = asset.type == AssetType.video;
+        final file = isVideo ? await asset.originFile : await asset.file;
+        if (file != null) {
+          paths.add(file.path);
+          if (isVideo) videoCount++;
+        }
       }
       if (paths.isEmpty) {
-        _showMessage('Impossible de lire cette vidéo.');
+        _showMessage('Impossible de lire ce média.');
         return;
       }
       if (!mounted) return;
 
-      if (paths.length == 1) {
-        openPublishScreen(context: context, videoPath: paths.first);
+      // Une seule vidéo : directement dans l'éditeur
+      if (paths.length == 1 && videoCount == 1) {
+        _openNext( videoPath: paths.first);
+        return;
+      }
+      if (widget.storyMode && videoCount == 0) { _openNext(videoPath: paths.first, isImage: true); return; }
+
+      // Que des photos : diaporama
+      if (videoCount == 0) {
+        setState(() => _processingLabel = 'Création du diaporama…');
+        final slideshow = await _videoEditService.createSlideshow(paths);
+        if (!mounted) return;
+        _openNext( videoPath: slideshow);
         return;
       }
 
-      setState(() => _processingLabel = 'Fusion des vidéos…');
+      // Plusieurs vidéos, ou vidéos et photos : une seule vidéo, dans l'ordre choisi
+      setState(() => _processingLabel = 'Fusion des médias…');
       final merged = await _videoEditService.mergeMedia(paths);
       if (!mounted) return;
-      openPublishScreen(context: context, videoPath: merged);
+      _openNext( videoPath: merged);
     } catch (e) {
       _showMessage('Import impossible : $e');
     } finally {
@@ -398,21 +427,29 @@ class _UploadScreenState extends State<UploadScreen> with WidgetsBindingObserver
     if (_isRecording || _isProcessing) return;
 
     try {
-      final result = await FilePicker.platform.pickFiles(
-        type: kIsWeb ? FileType.video : FileType.media,
-        allowMultiple: !kIsWeb,
-        withData: kIsWeb,
-      );
+          final result = await FilePicker.platform.pickFiles(
+          type: kIsWeb && !widget.storyMode
+              ? FileType.video
+              : FileType.media,
+          allowMultiple: !kIsWeb && !widget.storyMode,
+          withData: kIsWeb,
+        );
       if (!mounted || result == null || result.files.isEmpty) return;
 
       if (kIsWeb) {
         final file = result.files.first;
         final bytes = file.bytes;
+
         if (bytes == null || bytes.isEmpty) {
-          _showMessage('Impossible de lire la vidéo sélectionnée.');
+          _showMessage('Impossible de lire le média sélectionné.');
           return;
         }
-        openPublishScreen(context: context, videoBytes: bytes, fileName: file.name);
+
+        _openNext(
+          videoBytes: bytes,
+          fileName: file.name,
+          isImage: _imageExtensions.contains(_extensionOf(file)),
+        );
         return;
       }
 
@@ -428,18 +465,31 @@ class _UploadScreenState extends State<UploadScreen> with WidgetsBindingObserver
         }
       }
 
-      final total = videos.length + images.length;
+     final total = videos.length + images.length;
+
       if (total == 0) {
         _showMessage('Format non pris en charge.');
         return;
       }
+
+      // Traitement spécial pour les Stories
+      if (widget.storyMode) {
+        final first = videos.isNotEmpty ? videos.first : images.first;
+
+        _openNext(
+          videoPath: first.path!,
+          isImage: videos.isEmpty,
+        );
+        return;
+      }
+
       if (total > _maxItems) {
         _showMessage('Sélectionne $_maxItems médias maximum.');
         return;
       }
 
       if (videos.length == 1 && images.isEmpty) {
-        openPublishScreen(context: context, videoPath: videos.first.path!);
+        _openNext( videoPath: videos.first.path!);
         return;
       }
 
@@ -464,7 +514,7 @@ class _UploadScreenState extends State<UploadScreen> with WidgetsBindingObserver
         mergedPath = await _videoEditService.mergeMedia(ordered);
       }
       if (!mounted) return;
-      openPublishScreen(context: context, videoPath: mergedPath);
+      _openNext( videoPath: mergedPath);
     } catch (e) {
       _showMessage('Import impossible : $e');
     } finally {
@@ -482,8 +532,16 @@ class _UploadScreenState extends State<UploadScreen> with WidgetsBindingObserver
     return '$m:$s';
   }
 
+  // Écran toujours sombre (caméra, montage, photo) quel que soit le thème choisi
   @override
   Widget build(BuildContext context) {
+    return Theme(
+      data: ReemTheme.dark(),
+      child: Builder(builder: _buildBody),
+    );
+  }
+
+  Widget _buildBody(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
@@ -562,7 +620,7 @@ class _UploadScreenState extends State<UploadScreen> with WidgetsBindingObserver
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Color(0xFF0E1530), Color(0xFF060816)],
+          colors: [Color(0xFF1A0F33), Color(0xFF06030F)],
         ),
       ),
       child: Center(child: Icon(Icons.video_library_outlined, color: Colors.white54, size: 72)),
@@ -633,7 +691,6 @@ class _UploadScreenState extends State<UploadScreen> with WidgetsBindingObserver
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          tool(Icons.flip_camera_ios_outlined, 'Retourner', _isRecording || _cameras.length < 2 ? null : _flipCamera),
           tool(_torchOn ? Icons.flash_on : Icons.flash_off, 'Flash', _toggleTorch, active: _torchOn),
         ],
       ),
@@ -642,30 +699,26 @@ class _UploadScreenState extends State<UploadScreen> with WidgetsBindingObserver
 
   Widget _buildBottomArea() {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.only(bottom: 18),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (_supportsCamera) ...[
+          // Le mode photo n'existe pas sur le web (pas de montage possible)
+          if (_supportsCamera && !kIsWeb) ...[
             _buildModeSwitch(),
             const SizedBox(height: 14),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const SizedBox(width: 72),
-                  _buildShutter(),
-                  _buildGalleryButton(),
-                ],
-              ),
-            ),
-          ] else
-            Center(child: _buildGalleryButton()),
-          if (_supportsGallery && !_isRecording) ...[
-            const SizedBox(height: 16),
-            _buildGalleryStrip(),
           ],
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _buildGalleryButton(),
+                if (_supportsCamera) _buildShutter() else const SizedBox(width: 88),
+                _buildFlipButton(),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -746,26 +799,33 @@ class _UploadScreenState extends State<UploadScreen> with WidgetsBindingObserver
     );
   }
 
+  // À gauche du déclencheur : miniature de la dernière photo / vidéo, ouvre la galerie
   Widget _buildGalleryButton() {
     return GestureDetector(
-      onTap: _openGallerySheet,
+      onTap: _openGallery,
       child: SizedBox(
-        width: 72,
+        width: 64,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 46,
-              height: 46,
+              width: 52,
+              height: 52,
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(10),
+                color: Colors.black45,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white, width: 2),
               ),
-              child: const Icon(Icons.photo_library_rounded, color: Colors.black87, size: 25),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: _latestAsset != null
+                    ? _AssetThumb(asset: _latestAsset!, showDuration: false)
+                    : const Icon(Icons.photo_library_rounded, color: Colors.white, size: 26),
+              ),
             ),
             const SizedBox(height: 4),
             const Text(
-              'Importer',
+              'Galerie',
               style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600, shadows: reemTextShadow),
             ),
           ],
@@ -774,63 +834,32 @@ class _UploadScreenState extends State<UploadScreen> with WidgetsBindingObserver
     );
   }
 
-  // Une seule ligne : les vidéos récentes du téléphone, puis un « + »
-  Widget _buildGalleryStrip() {
-    if (_galleryDenied) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: TextButton.icon(
-          onPressed: _askGalleryAccess,
-          style: TextButton.styleFrom(
-            foregroundColor: Colors.white,
-            backgroundColor: Colors.black45,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          ),
-          icon: const Icon(Icons.photo_library_outlined, size: 20),
-          label: const Text('Autoriser l’accès à tes vidéos'),
-        ),
-      );
-    }
-
+  Widget _buildFlipButton() {
+    final enabled = _supportsCamera && _controller != null && !_isRecording && _cameras.length > 1;
     return SizedBox(
-      height: 96,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: _assets.length + 1,
-        separatorBuilder: (_, __) => const SizedBox(width: 6),
-        itemBuilder: (context, index) {
-          if (index == _assets.length) {
-            return GestureDetector(
-              onTap: _openGallerySheet,
-              child: Container(
-                width: 64,
-                height: 96,
-                decoration: BoxDecoration(
-                  color: Colors.black45,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.white54, width: 1.2),
-                ),
-                child: const Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.add_rounded, color: Colors.white, size: 30),
-                    SizedBox(height: 2),
-                    Text('Voir +', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
-                  ],
-                ),
+      width: 64,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GestureDetector(
+            onTap: enabled ? _flipCamera : null,
+            child: Container(
+              width: 52,
+              height: 52,
+              decoration: const BoxDecoration(color: Colors.black45, shape: BoxShape.circle),
+              child: Icon(
+                Icons.flip_camera_ios_outlined,
+                color: enabled ? Colors.white : Colors.white30,
+                size: 26,
               ),
-            );
-          }
-          final asset = _assets[index];
-          return GestureDetector(
-            onTap: () => _importAssets([asset]),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: SizedBox(width: 64, height: 96, child: _AssetThumb(asset: asset)),
             ),
-          );
-        },
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Retourner',
+            style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600, shadows: reemTextShadow),
+          ),
+        ],
       ),
     );
   }
@@ -845,9 +874,10 @@ class _PickerResult {
 
 /// Miniature d'une vidéo du téléphone, avec sa durée.
 class _AssetThumb extends StatefulWidget {
-  const _AssetThumb({required this.asset});
+  const _AssetThumb({required this.asset, this.showDuration = true});
 
   final AssetEntity asset;
+  final bool showDuration;
 
   @override
   State<_AssetThumb> createState() => _AssetThumbState();
@@ -882,6 +912,7 @@ class _AssetThumbState extends State<_AssetThumb> {
             return Image.memory(data, fit: BoxFit.cover, gaplessPlayback: true);
           },
         ),
+        if (widget.showDuration && widget.asset.type == AssetType.video)
         Positioned(
           left: 4,
           bottom: 3,
@@ -900,18 +931,11 @@ class _AssetThumbState extends State<_AssetThumb> {
   }
 }
 
-/// Galerie complète (le « + ») : défilement infini, sélection de plusieurs vidéos.
+/// Galerie complète : photos et vidéos du téléphone, défilement infini,
+/// sélection de plusieurs éléments (assemblés dans l'ordre).
 class _GalleryPickerSheet extends StatefulWidget {
-  const _GalleryPickerSheet({
-    required this.album,
-    required this.firstPage,
-    required this.pageSize,
-    required this.maxItems,
-  });
+  const _GalleryPickerSheet({required this.maxItems});
 
-  final AssetPathEntity album;
-  final List<AssetEntity> firstPage;
-  final int pageSize;
   final int maxItems;
 
   @override
@@ -919,20 +943,24 @@ class _GalleryPickerSheet extends StatefulWidget {
 }
 
 class _GalleryPickerSheetState extends State<_GalleryPickerSheet> {
+  static const int _pageSize = 60;
+
   final ScrollController _scroll = ScrollController();
-  late final List<AssetEntity> _assets = [...widget.firstPage];
+  final List<AssetEntity> _assets = [];
   final List<AssetEntity> _selected = [];
-  int _page = 1;
+  AssetPathEntity? _album;
+  RequestType _type = RequestType.common;
+  int _page = 0;
   bool _loading = false;
   bool _hasMore = true;
 
   @override
   void initState() {
     super.initState();
-    _hasMore = widget.firstPage.length >= widget.pageSize;
     _scroll.addListener(() {
-      if (_scroll.position.extentAfter < 600) _loadMore();
+      if (_scroll.hasClients && _scroll.position.extentAfter < 600) _loadMore();
     });
+    _loadType(RequestType.common);
   }
 
   @override
@@ -941,16 +969,35 @@ class _GalleryPickerSheetState extends State<_GalleryPickerSheet> {
     super.dispose();
   }
 
+  Future<void> _loadType(RequestType type) async {
+    setState(() {
+      _type = type;
+      _assets.clear();
+      _page = 0;
+      _hasMore = true;
+      _loading = true;
+    });
+    final albums = await PhotoManager.getAssetPathList(type: type, onlyAll: true);
+    if (!mounted) return;
+    _album = albums.isNotEmpty ? albums.first : null;
+    _loading = false;
+    if (_album == null) {
+      setState(() => _hasMore = false);
+      return;
+    }
+    await _loadMore();
+  }
+
   Future<void> _loadMore() async {
-    if (_loading || !_hasMore) return;
+    if (_loading || !_hasMore || _album == null) return;
     _loading = true;
     try {
-      final next = await widget.album.getAssetListPaged(page: _page, size: widget.pageSize);
+      final next = await _album!.getAssetListPaged(page: _page, size: _pageSize);
       if (!mounted) return;
       setState(() {
         _assets.addAll(next);
         _page++;
-        _hasMore = next.length >= widget.pageSize;
+        _hasMore = next.length >= _pageSize;
       });
     } finally {
       _loading = false;
@@ -961,10 +1008,27 @@ class _GalleryPickerSheetState extends State<_GalleryPickerSheet> {
     setState(() {
       if (_selected.contains(asset)) {
         _selected.remove(asset);
+      } else if (widget.maxItems == 1) {
+        _selected..clear()..add(asset);
       } else if (_selected.length < widget.maxItems) {
         _selected.add(asset);
       }
     });
+  }
+
+  Widget _chip(String label, RequestType type) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: ChoiceChip(
+        label: Text(label),
+        selected: _type == type,
+        selectedColor: ReemColors.primary,
+        backgroundColor: ReemColors.surface,
+        labelStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+        side: BorderSide.none,
+        onSelected: (_) => _loadType(type),
+      ),
+    );
   }
 
   @override
@@ -972,7 +1036,7 @@ class _GalleryPickerSheetState extends State<_GalleryPickerSheet> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(4, 4, 8, 4),
+          padding: const EdgeInsets.fromLTRB(4, 4, 8, 0),
           child: Row(
             children: [
               IconButton(
@@ -981,7 +1045,7 @@ class _GalleryPickerSheetState extends State<_GalleryPickerSheet> {
               ),
               const Expanded(
                 child: Text(
-                  'Tes vidéos',
+                  'Galerie',
                   style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
                 ),
               ),
@@ -992,12 +1056,22 @@ class _GalleryPickerSheetState extends State<_GalleryPickerSheet> {
             ],
           ),
         ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
+          child: Row(
+            children: [
+              _chip('Tout', RequestType.common),
+              _chip('Vidéos', RequestType.video),
+              _chip('Photos', RequestType.image),
+            ],
+          ),
+        ),
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 16),
           child: Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              'Touche une vidéo pour la sélectionner. Plusieurs vidéos sont assemblées dans l’ordre.',
+              'Touche pour sélectionner. Plusieurs médias sont assemblés dans l’ordre.',
               style: TextStyle(color: ReemColors.textMuted, fontSize: 12.5),
             ),
           ),
@@ -1005,7 +1079,11 @@ class _GalleryPickerSheetState extends State<_GalleryPickerSheet> {
         const SizedBox(height: 8),
         Expanded(
           child: _assets.isEmpty
-              ? const Center(child: Text('Aucune vidéo trouvée.', style: TextStyle(color: ReemColors.textMuted)))
+              ? Center(
+                  child: _loading || _hasMore
+                      ? const CircularProgressIndicator()
+                      : const Text('Rien à afficher ici.', style: TextStyle(color: ReemColors.textMuted)),
+                )
               : GridView.builder(
                   controller: _scroll,
                   padding: const EdgeInsets.all(2),
@@ -1013,7 +1091,7 @@ class _GalleryPickerSheetState extends State<_GalleryPickerSheet> {
                     crossAxisCount: 3,
                     mainAxisSpacing: 2,
                     crossAxisSpacing: 2,
-                    childAspectRatio: 0.7,
+                    childAspectRatio: 0.78,
                   ),
                   itemCount: _assets.length,
                   itemBuilder: (context, index) {
@@ -1062,7 +1140,7 @@ class _GalleryPickerSheetState extends State<_GalleryPickerSheet> {
                 onPressed: _selected.isEmpty
                     ? null
                     : () => Navigator.pop(context, _PickerResult(assets: List.of(_selected))),
-                child: Text(_selected.isEmpty ? 'Choisis une vidéo' : 'Importer (${_selected.length})'),
+                child: Text(_selected.isEmpty ? 'Choisis une photo ou une vidéo' : 'Importer (${_selected.length})'),
               ),
             ),
           ),

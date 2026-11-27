@@ -1,30 +1,21 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:reem_front/main.dart';
+import 'package:reem_front/screens/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('REEM application builds successfully', (WidgetTester tester) async {
+    await tester.pumpWidget(const ReemApp());
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    // Vérifier que l'application démarre.
+    expect(find.text('REEM'), findsOneWidget);
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    // Laisser le délai du SplashScreen s'écouler.
+    await tester.pump(const Duration(milliseconds: 1900));
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    // Terminer la transition vers le fil d'actualité.
+    await tester.pump(const Duration(milliseconds: 450));
+
+    // Vérifier que l'application est toujours construite.
+    expect(find.byType(ReemApp), findsOneWidget);
   });
 }

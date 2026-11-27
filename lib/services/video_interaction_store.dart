@@ -42,3 +42,18 @@ class VideoInteractionStore {
     );
   }
 }
+
+/// Mémorise les abonnements faits pendant la session (petit « + » du fil, profils).
+/// Une valeur ici est plus récente que celle renvoyée par le serveur dans la liste de vidéos.
+class FollowCache {
+  FollowCache._();
+
+  static final Map<int, bool> _state = {};
+
+  /// true / false si on sait, null si le cache ne sait pas
+  static bool? stateOf(int userId) => _state[userId];
+
+  static void set(int userId, bool followed) => _state[userId] = followed;
+
+  static void clear() => _state.clear();
+}

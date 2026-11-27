@@ -13,6 +13,7 @@ class Video {
   final int commentsCount;
   final bool isLiked;
   final bool isFavorited;
+  final bool isAuthorFollowed; // l'utilisateur connecté suit-il l'auteur ?
 
   Video({
     required this.id,
@@ -26,6 +27,7 @@ class Video {
     required this.commentsCount,
     required this.isLiked,
     required this.isFavorited,
+    this.isAuthorFollowed = false,
   });
 
   // Convertit le JSON de Laravel en objet Dart
@@ -51,6 +53,7 @@ class Video {
       commentsCount: json['comments_count'] ?? 0,
       isLiked: json['liked_by_user'] ?? false,
       isFavorited: json['favorited_by_user'] ?? false,
+      isAuthorFollowed: json['author_is_followed'] == true,
     );
   }
 }

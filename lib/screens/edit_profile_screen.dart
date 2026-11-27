@@ -8,6 +8,7 @@ import '../services/session_manager.dart';
 import '../theme/reem_theme.dart';
 import '../utils/media_url.dart';
 import '../widgets/account_dialogs.dart';
+import 'photo_crop_screen.dart';
 
 /// Modification du profil : photo, nom, @nom d'utilisateur, bio, site web.
 class EditProfileScreen extends StatefulWidget {
@@ -77,13 +78,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       _toast('Impossible de lire cette image.');
       return;
     }
-    if (file.size > 5 * 1024 * 1024) {
-      _toast('La photo est trop lourde (5 Mo maximum).');
-      return;
-    }
+    if (!mounted) return;
+    final cropped = await cropProfilePhoto(context, file.bytes!);
+    if (cropped == null || !mounted) return;
     setState(() {
-      _newPhotoBytes = file.bytes;
-      _newPhotoName = file.name;
+      _newPhotoBytes = cropped;
+      _newPhotoName = 'photo_profil.png';
     });
   }
 
@@ -142,7 +142,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         padding: const EdgeInsets.only(bottom: 6, top: 18),
         child: Text(
           text,
-          style: const TextStyle(color: ReemColors.textSecondary, fontSize: 13, fontWeight: FontWeight.w600),
+          style: TextStyle(color: context.reem.textSecondary, fontSize: 13, fontWeight: FontWeight.w600),
         ),
       );
 
@@ -177,11 +177,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     decoration: const BoxDecoration(shape: BoxShape.circle, gradient: ReemColors.gradient),
                     child: CircleAvatar(
                       radius: 56,
-                      backgroundColor: ReemColors.surfaceHigh,
+                      backgroundColor: context.reem.surfaceHigh,
                       backgroundImage: _newPhotoBytes != null
                           ? MemoryImage(_newPhotoBytes!)
                           : (shownPhoto != null ? NetworkImage(shownPhoto) as ImageProvider : null),
-                      child: !hasPhoto ? const Icon(Icons.person_rounded, color: Colors.white70, size: 54) : null,
+                      child: !hasPhoto ? Icon(Icons.person_rounded, color: context.reem.textMuted, size: 54) : null,
                     ),
                   ),
                   Positioned(
@@ -192,7 +192,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       decoration: BoxDecoration(
                         color: ReemColors.primary,
                         shape: BoxShape.circle,
-                        border: Border.all(color: ReemColors.background, width: 3),
+                        border: Border.all(color: context.reem.background, width: 3),
                       ),
                       child: const Icon(Icons.camera_alt_rounded, color: Colors.white, size: 18),
                     ),
@@ -217,19 +217,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           TextField(
             controller: _name,
             textCapitalization: TextCapitalization.words,
-            style: const TextStyle(color: Colors.white),
+            style: TextStyle(color: context.reem.text),
             decoration: const InputDecoration(hintText: 'Ton nom'),
           ),
           _label('Nom d’utilisateur'),
           TextField(
             controller: _username,
             autocorrect: false,
-            style: const TextStyle(color: Colors.white),
-            decoration: const InputDecoration(
+            style: TextStyle(color: context.reem.text),
+            decoration: InputDecoration(
               hintText: 'ex. awa_ouedraogo',
               prefixText: '@',
               helperText: 'Lettres, chiffres, points et tirets bas (3 à 30 caractères)',
-              helperStyle: TextStyle(color: ReemColors.textMuted),
+              helperStyle: TextStyle(color: context.reem.textMuted),
             ),
           ),
           _label('Bio'),
@@ -237,7 +237,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             controller: _bio,
             maxLines: 4,
             maxLength: 300,
-            style: const TextStyle(color: Colors.white),
+            style: TextStyle(color: context.reem.text),
             decoration: const InputDecoration(hintText: 'Parle un peu de toi…'),
           ),
           _label('Site web'),
@@ -245,30 +245,30 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             controller: _website,
             keyboardType: TextInputType.url,
             autocorrect: false,
-            style: const TextStyle(color: Colors.white),
+            style: TextStyle(color: context.reem.text),
             decoration: const InputDecoration(hintText: 'https://…'),
           ),
           _label('E-mail'),
           TextField(
             controller: TextEditingController(text: email),
             enabled: false,
-            style: const TextStyle(color: ReemColors.textMuted),
-            decoration: const InputDecoration(prefixIcon: Icon(Icons.lock_outline_rounded, color: ReemColors.textMuted, size: 20)),
+            style: TextStyle(color: context.reem.textMuted),
+            decoration: InputDecoration(prefixIcon: Icon(Icons.lock_outline_rounded, color: context.reem.textMuted, size: 20)),
           ),
           const SizedBox(height: 30),
           const Divider(),
           ListTile(
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.lock_reset_rounded, color: Colors.white),
-            title: const Text('Changer le mot de passe', style: TextStyle(color: Colors.white)),
-            trailing: const Icon(Icons.chevron_right_rounded, color: ReemColors.textMuted),
+            leading: Icon(Icons.lock_reset_rounded, color: context.reem.text),
+            title: Text('Changer le mot de passe', style: TextStyle(color: context.reem.text)),
+            trailing: Icon(Icons.chevron_right_rounded, color: context.reem.textMuted),
             onTap: () => showChangePasswordDialog(context),
           ),
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.delete_forever_rounded, color: ReemColors.like),
             title: const Text('Supprimer mon compte', style: TextStyle(color: ReemColors.like)),
-            trailing: const Icon(Icons.chevron_right_rounded, color: ReemColors.textMuted),
+            trailing: Icon(Icons.chevron_right_rounded, color: context.reem.textMuted),
             onTap: () => showDeleteAccountDialog(context),
           ),
         ],

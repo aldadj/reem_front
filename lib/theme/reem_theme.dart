@@ -2,19 +2,20 @@ import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flutter/material.dart';
 
-/// Palette Reem : sombre, profonde, avec un dégradé bleu -> violet.
+/// Palette Reem, tirée du logo : violet profond + orange vif, sur un fond nuit légèrement violacé.
 class ReemColors {
   ReemColors._();
 
-  static const Color background = Color(0xFF0B0F1E);
-  static const Color sidebar = Color(0xFF0E1426);
-  static const Color surface = Color(0xFF131A2E);
-  static const Color surfaceHigh = Color(0xFF1B2440);
+  static const Color background = Color(0xFF0B0714);
+  static const Color sidebar = Color(0xFF0F0A1C);
+  static const Color surface = Color(0xFF161026);
+  static const Color surfaceHigh = Color(0xFF221838);
 
-  static const Color primary = Color(0xFF7C9BFF);
-  static const Color accent = Color(0xFFB07CFF);
+  static const Color primary = Color(0xFF8F55FF); // violet du logo
+  static const Color accent = Color(0xFFFF8A2B); // orange du logo
   static const Color like = Color(0xFFFF3B5C);
   static const Color gold = Color(0xFFFFC83D);
+  static const Color violetDeep = Color(0xFF2A1166); // indigo profond du « R »
 
   static const Color textSecondary = Color(0xB3FFFFFF);
   static const Color textMuted = Color(0x80FFFFFF);
@@ -25,6 +26,100 @@ class ReemColors {
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
+}
+
+
+/// Couleurs qui changent selon le mode clair / sombre.
+/// À utiliser dans les écrans : `context.reem.text`, `context.reem.surface`...
+/// (les couleurs de marque, comme `ReemColors.primary`, ne changent pas).
+@immutable
+class ReemPalette extends ThemeExtension<ReemPalette> {
+  const ReemPalette({
+    required this.background,
+    required this.sidebar,
+    required this.surface,
+    required this.surfaceHigh,
+    required this.text,
+    required this.textSecondary,
+    required this.textMuted,
+    required this.border,
+  });
+
+  final Color background;
+  final Color sidebar;
+  final Color surface;
+  final Color surfaceHigh;
+  final Color text;
+  final Color textSecondary;
+  final Color textMuted;
+  final Color border;
+
+  static const ReemPalette dark = ReemPalette(
+    background: Color(0xFF0B0714),
+    sidebar: Color(0xFF0F0A1C),
+    surface: Color(0xFF161026),
+    surfaceHigh: Color(0xFF221838),
+    text: Colors.white,
+    textSecondary: Color(0xB3FFFFFF),
+    textMuted: Color(0x80FFFFFF),
+    border: Color(0x14FFFFFF),
+  );
+
+  static const ReemPalette light = ReemPalette(
+    background: Color(0xFFF6F2FD),
+    sidebar: Color(0xFFFFFFFF),
+    surface: Color(0xFFFFFFFF),
+    surfaceHigh: Color(0xFFECE4FA),
+    text: Color(0xFF150F26),
+    textSecondary: Color(0xFF50466B),
+    textMuted: Color(0xFF82789C),
+    border: Color(0x1F150F26),
+  );
+
+  @override
+  ReemPalette copyWith({
+    Color? background,
+    Color? sidebar,
+    Color? surface,
+    Color? surfaceHigh,
+    Color? text,
+    Color? textSecondary,
+    Color? textMuted,
+    Color? border,
+  }) {
+    return ReemPalette(
+      background: background ?? this.background,
+      sidebar: sidebar ?? this.sidebar,
+      surface: surface ?? this.surface,
+      surfaceHigh: surfaceHigh ?? this.surfaceHigh,
+      text: text ?? this.text,
+      textSecondary: textSecondary ?? this.textSecondary,
+      textMuted: textMuted ?? this.textMuted,
+      border: border ?? this.border,
+    );
+  }
+
+  @override
+  ReemPalette lerp(ThemeExtension<ReemPalette>? other, double t) {
+    if (other is! ReemPalette) return this;
+    return ReemPalette(
+      background: Color.lerp(background, other.background, t)!,
+      sidebar: Color.lerp(sidebar, other.sidebar, t)!,
+      surface: Color.lerp(surface, other.surface, t)!,
+      surfaceHigh: Color.lerp(surfaceHigh, other.surfaceHigh, t)!,
+      text: Color.lerp(text, other.text, t)!,
+      textSecondary: Color.lerp(textSecondary, other.textSecondary, t)!,
+      textMuted: Color.lerp(textMuted, other.textMuted, t)!,
+      border: Color.lerp(border, other.border, t)!,
+    );
+  }
+}
+
+extension ReemContext on BuildContext {
+  /// Palette du mode actuel (clair ou sombre).
+  ReemPalette get reem => Theme.of(this).extension<ReemPalette>() ?? ReemPalette.dark;
+
+  bool get isDarkMode => Theme.of(this).brightness == Brightness.dark;
 }
 
 /// Ombre douce pour les textes posés sur une vidéo.
@@ -48,14 +143,21 @@ class ReemScrollBehavior extends MaterialScrollBehavior {
 class ReemTheme {
   ReemTheme._();
 
-  static ThemeData dark() {
+  static ThemeData dark() => _build(Brightness.dark, ReemPalette.dark);
+
+  static ThemeData light() => _build(Brightness.light, ReemPalette.light);
+
+  static ThemeData _build(Brightness brightness, ReemPalette palette) {
+    final isDark = brightness == Brightness.dark;
+
     final scheme = ColorScheme.fromSeed(
       seedColor: ReemColors.primary,
-      brightness: Brightness.dark,
+      brightness: brightness,
     ).copyWith(
-      primary: ReemColors.primary,
+      primary: isDark ? ReemColors.primary : const Color(0xFF6A2FE0),
       secondary: ReemColors.accent,
-      surface: ReemColors.surface,
+      surface: palette.surface,
+      onSurface: palette.text,
       error: ReemColors.like,
     );
 
@@ -66,26 +168,45 @@ class ReemTheme {
 
     return ThemeData(
       useMaterial3: true,
-      brightness: Brightness.dark,
+      brightness: brightness,
       colorScheme: scheme,
-      scaffoldBackgroundColor: ReemColors.background,
-      canvasColor: ReemColors.background,
+      extensions: [palette],
+      scaffoldBackgroundColor: palette.background,
+      canvasColor: palette.background,
       splashFactory: InkSparkle.splashFactory,
-      appBarTheme: const AppBarTheme(
+      textTheme: ThemeData(brightness: brightness).textTheme.apply(
+            bodyColor: palette.text,
+            displayColor: palette.text,
+          ),
+      iconTheme: IconThemeData(color: palette.text),
+      listTileTheme: ListTileThemeData(
+        iconColor: palette.text,
+        textColor: palette.text,
+      ),
+      popupMenuTheme: PopupMenuThemeData(
+        color: palette.surfaceHigh,
+        textStyle: TextStyle(color: palette.text),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+      appBarTheme: AppBarTheme(
         backgroundColor: Colors.transparent,
+        foregroundColor: palette.text,
         elevation: 0,
         scrolledUnderElevation: 0,
         centerTitle: true,
+        iconTheme: IconThemeData(color: palette.text),
         titleTextStyle: TextStyle(
-          color: Colors.white,
+          color: palette.text,
           fontSize: 17,
           fontWeight: FontWeight.w700,
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: ReemColors.primary,
+          backgroundColor: scheme.primary,
           foregroundColor: Colors.white,
+          disabledBackgroundColor: palette.surfaceHigh,
+          disabledForegroundColor: palette.textMuted,
           elevation: 0,
           padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -94,8 +215,8 @@ class ReemTheme {
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          foregroundColor: Colors.white,
-          side: const BorderSide(color: ReemColors.border, width: 1.2),
+          foregroundColor: palette.text,
+          side: BorderSide(color: palette.border, width: 1.2),
           padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
@@ -103,46 +224,56 @@ class ReemTheme {
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
-          foregroundColor: ReemColors.primary,
+          foregroundColor: scheme.primary,
           textStyle: const TextStyle(fontWeight: FontWeight.w600),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: ReemColors.surface,
+        fillColor: isDark ? palette.surface : palette.surfaceHigh,
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-        hintStyle: const TextStyle(color: ReemColors.textMuted),
+        hintStyle: TextStyle(color: palette.textMuted),
+        prefixIconColor: palette.textMuted,
+        suffixIconColor: palette.textMuted,
         border: inputBorder,
         enabledBorder: inputBorder,
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: ReemColors.primary, width: 1.4),
+          borderSide: BorderSide(color: scheme.primary, width: 1.4),
+        ),
+      ),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected) ? Colors.white : palette.textMuted,
+        ),
+        trackColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected) ? scheme.primary : palette.surfaceHigh,
         ),
       ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
-        backgroundColor: ReemColors.surfaceHigh,
+        backgroundColor: isDark ? palette.surfaceHigh : const Color(0xFF241A3D),
         contentTextStyle: const TextStyle(color: Colors.white),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
-      bottomSheetTheme: const BottomSheetThemeData(
-        backgroundColor: ReemColors.surface,
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: palette.surface,
         surfaceTintColor: Colors.transparent,
         showDragHandle: true,
-        dragHandleColor: Colors.white24,
-        shape: RoundedRectangleBorder(
+        dragHandleColor: palette.border,
+        shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
       ),
       dialogTheme: DialogThemeData(
-        backgroundColor: ReemColors.surface,
+        backgroundColor: palette.surface,
         surfaceTintColor: Colors.transparent,
+        titleTextStyle: TextStyle(color: palette.text, fontSize: 19, fontWeight: FontWeight.w800),
+        contentTextStyle: TextStyle(color: palette.textSecondary, fontSize: 14.5),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
       ),
-      dividerTheme: const DividerThemeData(color: ReemColors.border, space: 1),
-      progressIndicatorTheme: const ProgressIndicatorThemeData(
-        color: ReemColors.primary,
-      ),
+      dividerTheme: DividerThemeData(color: palette.border, space: 1),
+      progressIndicatorTheme: ProgressIndicatorThemeData(color: scheme.primary),
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
           TargetPlatform.android: ZoomPageTransitionsBuilder(),

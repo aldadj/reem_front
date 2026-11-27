@@ -108,12 +108,12 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: ReemColors.background,
+      backgroundColor: context.reem.background,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.close, color: Colors.white),
+          icon: Icon(Icons.close, color: context.reem.text),
           onPressed: () {
             Navigator.of(context).pushReplacement(
               MaterialPageRoute(builder: (_) => const FeedScreen()),
@@ -122,9 +122,9 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       ),
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color(0xFF1B2547), ReemColors.background],
+            colors: [context.isDarkMode ? const Color(0xFF2A1650) : const Color(0xFFE6D9FB), context.reem.background],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -137,9 +137,9 @@ class _LoginScreenState extends State<LoginScreen> {
               constraints: const BoxConstraints(maxWidth: 520),
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
-                color: ReemColors.surface.withValues(alpha: 0.92),
+                color: context.reem.surface.withValues(alpha: 0.92),
                 borderRadius: BorderRadius.circular(26),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+                border: Border.all(color: context.reem.text.withValues(alpha: 0.06)),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.24),
@@ -156,11 +156,11 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 40),
               const ReemLogo(),
               const SizedBox(height: 12),
-              const Text(
+              Text(
                 'Bienvenue',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: ReemColors.textMuted,
+                  color: context.reem.textMuted,
                   fontSize: 14,
                 ),
               ),
@@ -169,12 +169,12 @@ class _LoginScreenState extends State<LoginScreen> {
               // Champ Email
               TextField(
                 controller: _emailController,
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: context.reem.text),
                 keyboardType: TextInputType.emailAddress,
                 decoration: InputDecoration(
                   hintText: 'Email',
-                  hintStyle: const TextStyle(color: ReemColors.textMuted),
-                  prefixIcon: const Icon(Icons.email, color: ReemColors.textMuted),
+                  hintStyle: TextStyle(color: context.reem.textMuted),
+                  prefixIcon: Icon(Icons.email, color: context.reem.textMuted),
                 ),
               ),
               const SizedBox(height: 16),
@@ -182,12 +182,12 @@ class _LoginScreenState extends State<LoginScreen> {
               // Champ Mot de passe
               TextField(
                 controller: _passwordController,
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: context.reem.text),
                 obscureText: true,
                 decoration: InputDecoration(
                   hintText: 'Mot de passe',
-                  hintStyle: const TextStyle(color: ReemColors.textMuted),
-                  prefixIcon: const Icon(Icons.lock, color: ReemColors.textMuted),
+                  hintStyle: TextStyle(color: context.reem.textMuted),
+                  prefixIcon: Icon(Icons.lock, color: context.reem.textMuted),
                 ),
               ),
               const SizedBox(height: 24),
@@ -238,14 +238,14 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 16),
 
               // Séparateur visuel
-              const Row(
+              Row(
                 children: [
-                  Expanded(child: Divider(color: ReemColors.textMuted)),
+                  Expanded(child: Divider(color: context.reem.textMuted)),
                   Padding(
                     padding: EdgeInsets.symmetric(horizontal: 16),
-                    child: Text('OU', style: TextStyle(color: ReemColors.textMuted)),
+                    child: Text('OU', style: TextStyle(color: context.reem.textMuted)),
                   ),
-                  Expanded(child: Divider(color: ReemColors.textMuted)),
+                  Expanded(child: Divider(color: context.reem.textMuted)),
                 ],
               ),
               const SizedBox(height: 16),
@@ -256,8 +256,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     ? null
                     : _continueWithGoogle,
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  side: const BorderSide(color: ReemColors.border),
+                  foregroundColor: context.reem.text,
+                  side: BorderSide(color: context.reem.border),
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -272,11 +272,11 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 16),
               if (!GoogleSignInService.isSupportedPlatform)
-                const Padding(
+                Padding(
                   padding: EdgeInsets.only(bottom: 16),
                   child: Text(
                     'Google Sign-In non supporté sur Windows. Testez sur Android, iOS ou Web.',
-                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                    style: TextStyle(color: context.reem.textSecondary, fontSize: 12),
                     textAlign: TextAlign.center,
                   ),
                 ),
@@ -285,9 +285,9 @@ class _LoginScreenState extends State<LoginScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Text(
+                  Text(
                     'Pas encore de compte ? ',
-                    style: TextStyle(color: ReemColors.textMuted),
+                    style: TextStyle(color: context.reem.textMuted),
                   ),
                   GestureDetector(
                     onTap: () {
@@ -295,10 +295,10 @@ class _LoginScreenState extends State<LoginScreen> {
                         MaterialPageRoute(builder: (_) => const AuthScreen()),
                       );
                     },
-                    child: const Text(
+                    child: Text(
                       'S\'inscrire',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: context.reem.text,
                         fontWeight: FontWeight.bold,
                       ),
                     ),

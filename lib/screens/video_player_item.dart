@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../utils/platform_helper.dart';
 import '../theme/reem_theme.dart';
+import 'video_actions_sheet.dart';
+import '../services/app_settings.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:media_kit/media_kit.dart';
@@ -15,6 +17,7 @@ import 'package:share_plus/share_plus.dart';
 import '../services/session_manager.dart';
 import '../services/auth_service.dart';
 import '../services/video_interaction_store.dart';
+import '../services/user_service.dart';
 import '../services/video_playback_coordinator.dart';
 import '../screens/auth_screen.dart';
 import '../screens/chat_screen.dart';
@@ -30,6 +33,13 @@ class VideoPlayerItem extends StatefulWidget {
   final VoidCallback? onAutoNext;
   final bool showBackButton;
 
+  /// Ouvre directement les commentaires (depuis une notification)
+  final bool openCommentsOnStart;
+  final int? highlightCommentId;
+
+  /// true pour les vidéos du fil : elles respectent le réglage « Lecture automatique »
+  final bool isFeedItem;
+
   const VideoPlayerItem({
     Key? key,
     required this.video,
@@ -38,6 +48,9 @@ class VideoPlayerItem extends StatefulWidget {
     this.itemIndex,
     this.onAutoNext,
     this.showBackButton = true,
+    this.openCommentsOnStart = false,
+    this.highlightCommentId,
+    this.isFeedItem = false,
   }) : super(key: key);
 
   @override
@@ -59,12 +72,13 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
   bool _isFavorited = false;
   bool _isPlaying = false;
   bool _showCommentsPanel = false;
-  bool _autoScroll = false;
+  bool _autoScroll = AppSettings.instance.autoNext;
   bool _showVolumeSlider = false;
   bool _isDownloading = false;
   double _playbackRate = 1.0;
   double _volume = 100.0;
-  Duration _position = Duration.zero;
+  // Position de lecture : un ValueNotifier évite de reconstruire tout l'écran à chaque image
+  final ValueNotifier<Duration> _position = ValueNotifier(Duration.zero);
   Duration _duration = Duration.zero;
   late int _likesCount;
   late int _commentsCount;
@@ -82,6 +96,7 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
   @override
   void initState() {
     super.initState();
+    _showCommentsPanel = widget.openCommentsOnStart;
     WidgetsBinding.instance.addObserver(this);
     player = Player();
     controller = VideoController(player);
@@ -90,7 +105,7 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
     widget.feedVisible.addListener(_handleFeedVisibleChanged);
     widget.visibleVideoIndex?.addListener(_handleFeedVisibleChanged);
     _positionSubscription = player.stream.position.listen((position) {
-      if (mounted) setState(() => _position = position);
+      _position.value = position;
     });
     _durationSubscription = player.stream.duration.listen((duration) {
       if (!mounted) return;
@@ -152,7 +167,9 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
     }
   }
 
-  bool get _shouldPlay => widget.feedVisible.value &&
+  bool get _shouldPlay =>
+      widget.feedVisible.value &&
+      (!widget.isFeedItem || AppSettings.instance.autoplay) &&
       (widget.visibleVideoIndex == null || widget.itemIndex == widget.visibleVideoIndex!.value);
 
   Future<void> _openVideo(String url) async {
@@ -235,89 +252,32 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
     }
   }
 
-  void _showMobilePlaybackSettings() {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      enableDrag: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.48,
-        minChildSize: 0.32,
-        maxChildSize: 0.78,
-        builder: (context, scrollController) => Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF202124),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-          ),
-          child: ListView(
-            controller: scrollController,
-            padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
-            children: [
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 4,
-                  decoration: BoxDecoration(color: Colors.white38, borderRadius: BorderRadius.circular(4)),
-                ),
-              ),
-              const SizedBox(height: 14),
-              const Text('Paramètres de lecture', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 17)),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Défilement automatique', style: TextStyle(color: Colors.white)),
-                value: _autoScroll,
-                activeTrackColor: Colors.redAccent,
-                onChanged: (value) => setState(() => _autoScroll = value),
-              ),
-              const Text('Vitesse', style: TextStyle(color: Colors.white70)),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                children: [0.75, 1.0, 1.25, 1.5, 2.0].map((rate) {
-                  final label = rate == 1.0 ? '1.0x' : '${rate}x';
-                  return ChoiceChip(
-                    label: Text(label),
-                    selected: _playbackRate == rate,
-                    onSelected: (_) {
-                      setState(() => _playbackRate = rate);
-                      player.setRate(rate);
-                    },
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Icon(_volume == 0 ? Icons.volume_off : Icons.volume_up, color: Colors.white70),
-                  Expanded(
-                    child: Slider(
-                      min: 0,
-                      max: 100,
-                      value: _volume,
-                      activeColor: Colors.white,
-                      onChanged: (value) {
-                        setState(() => _volume = value);
-                        player.setVolume(value);
-                      },
-                    ),
-                  ),
-                  Text('${_volume.round()}%', style: const TextStyle(color: Colors.white70)),
-                ],
-              ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: _isDownloading
-                    ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.download_outlined, color: Colors.white),
-                title: const Text('Télécharger la vidéo', style: TextStyle(color: Colors.white)),
-                onTap: _isDownloading ? null : _downloadVideo,
-              ),
-            ],
-          ),
-        ),
-      ),
+  // Appui long sur la vidéo (mobile) ou bouton Partager : menu qui remonte du bas
+  void _showMobilePlaybackSettings() => _showVideoActions();
+
+  void _showVideoActions() {
+    showVideoActionsSheet(
+      context,
+      video: widget.video,
+      playbackRate: _playbackRate,
+      onRate: (rate) {
+        setState(() => _playbackRate = rate);
+        player.setRate(rate);
+      },
+      autoNext: _autoScroll,
+      onAutoNext: (value) {
+        setState(() => _autoScroll = value);
+        // La préférence est enregistrée pour les prochaines vidéos
+        AppSettings.instance.update(() => AppSettings.instance.autoNext = value);
+      },
+      isFavorited: () => _isFavorited,
+      onToggleFavorite: _toggleFavorite,
+      volume: _volume,
+      onVolume: (value) {
+        setState(() => _volume = value);
+        player.setVolume(value);
+      },
+      onDownload: _isDownloading ? null : _downloadVideo,
     );
   }
 
@@ -327,9 +287,14 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
     return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 
-  Widget _buildPlaybackBar() {
+  Widget _buildPlaybackBar() => ValueListenableBuilder<Duration>(
+        valueListenable: _position,
+        builder: (context, position, _) => _playbackBarFor(position),
+      );
+
+  Widget _playbackBarFor(Duration position) {
     final durationMs = _duration.inMilliseconds;
-    final positionMs = _position.inMilliseconds.clamp(0, durationMs > 0 ? durationMs : 0);
+    final positionMs = position.inMilliseconds.clamp(0, durationMs > 0 ? durationMs : 0);
     final rateLabel = switch (_playbackRate) {
       0.75 => '0.75x',
       1.25 => '1.25x',
@@ -357,7 +322,7 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
                     onPressed: _togglePlayback,
                     icon: Icon(_isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, color: Colors.white, size: 24),
                   ),
-                  Text(_formatPlaybackTime(_position), style: const TextStyle(color: Colors.white, fontSize: 11)),
+                  Text(_formatPlaybackTime(position), style: const TextStyle(color: Colors.white, fontSize: 11)),
                   Expanded(
                     child: Slider(
                       min: 0,
@@ -760,186 +725,7 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
     }
   }
 
-  Future<void> _shareVideo() async {
-    final link = widget.video.videoUrl;
-    final shareText = '${widget.video.title}\n$link';
-    if (!_sessionManager.isAuthenticated) {
-      await SharePlus.instance.share(ShareParams(text: shareText, subject: widget.video.title));
-      return;
-    }
-
-    List<dynamic> friends = [];
-    try {
-      final response = await http.get(
-        Uri.parse('${AuthService.baseUrl}/users/following'),
-        headers: {
-          'Authorization': 'Bearer ${_sessionManager.authToken}',
-          'Accept': 'application/json',
-        },
-      );
-      if (response.statusCode == 200) friends = jsonDecode(response.body) as List<dynamic>;
-    } catch (e) {
-      debugPrint('Impossible de charger les amis pour le partage : $e');
-    }
-    if (!mounted) return;
-
-    final selectedIds = <int>{};
-    var isSending = false;
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF171717),
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (context, setSheetState) => SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 12, 18, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 36,
-                    height: 4,
-                    decoration: BoxDecoration(color: Colors.white30, borderRadius: BorderRadius.circular(4)),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text('Partager la vidéo', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 12),
-                if (friends.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 14),
-                    child: Text('Aucun ami suivi pour le moment.', style: TextStyle(color: Colors.white60)),
-                  )
-                else
-                  ConstrainedBox(
-                    constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.32),
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: friends.length,
-                      itemBuilder: (context, index) {
-                        final friend = friends[index] as Map<String, dynamic>;
-                        final id = friend['id'] as int;
-                        final selected = selectedIds.contains(id);
-                        return CheckboxListTile(
-                          value: selected,
-                          activeColor: Colors.redAccent,
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(friend['name']?.toString() ?? 'Utilisateur', style: const TextStyle(color: Colors.white)),
-                          secondary: CircleAvatar(
-                            backgroundColor: Colors.white12,
-                            child: Text((friend['name']?.toString().isNotEmpty ?? false) ? friend['name'].toString()[0].toUpperCase() : '?', style: const TextStyle(color: Colors.white)),
-                          ),
-                          onChanged: (value) => setSheetState(() {
-                            if (value == true) {
-                              selectedIds.add(id);
-                            } else {
-                              selectedIds.remove(id);
-                            }
-                          }),
-                        );
-                      },
-                    ),
-                  ),
-                const Divider(color: Colors.white24),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () async {
-                          await Clipboard.setData(ClipboardData(text: link));
-                          if (sheetContext.mounted) Navigator.pop(sheetContext);
-                          if (mounted) {
-                            ScaffoldMessenger.of(this.context).showSnackBar(const SnackBar(content: Text('Lien copié.')));
-                          }
-                        },
-                        icon: const Icon(Icons.link),
-                        label: const Text('Copier le lien'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: selectedIds.isEmpty || isSending
-                            ? null
-                            : () async {
-                                setSheetState(() => isSending = true);
-                                var sentCount = 0;
-                                for (final id in selectedIds) {
-                                  try {
-                                    final conversationResponse = await http.post(
-                                      Uri.parse('${AuthService.baseUrl}/conversations'),
-                                      headers: {
-                                        'Authorization': 'Bearer ${_sessionManager.authToken}',
-                                        'Content-Type': 'application/json',
-                                        'Accept': 'application/json',
-                                      },
-                                      body: jsonEncode({'other_user_id': id}),
-                                    );
-                                    if (conversationResponse.statusCode != 200) continue;
-                                    final conversationId = jsonDecode(conversationResponse.body)['id'];
-                                    final messageResponse = await http.post(
-                                      Uri.parse('${AuthService.baseUrl}/conversations/$conversationId/messages'),
-                                      headers: {
-                                        'Authorization': 'Bearer ${_sessionManager.authToken}',
-                                        'Content-Type': 'application/json',
-                                        'Accept': 'application/json',
-                                      },
-                                      body: jsonEncode({
-                                        'body': 'REEM_VIDEO:${jsonEncode({
-                                          'id': widget.video.id,
-                                          'title': widget.video.title,
-                                          'description': widget.video.description,
-                                          'video_url': link,
-                                          'username': widget.video.username,
-                                          'author_id': widget.video.authorId,
-                                          'likes_count': widget.video.likesCount,
-                                          'comments_count': widget.video.commentsCount,
-                                          'is_liked': false,
-                                          'is_favorited': false,
-                                        })}',
-                                      }),
-                                    );
-                                    if (messageResponse.statusCode == 201) sentCount++;
-                                  } catch (e) {
-                                    debugPrint('Échec du partage avec $id : $e');
-                                  }
-                                }
-                                if (sheetContext.mounted) Navigator.pop(sheetContext);
-                                if (mounted) {
-                                  ScaffoldMessenger.of(this.context).showSnackBar(
-                                    SnackBar(content: Text(sentCount > 0 ? 'Vidéo partagée avec $sentCount ami(s).' : 'Impossible d’envoyer la vidéo.')),
-                                  );
-                                }
-                              },
-                        icon: isSending
-                            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                            : const Icon(Icons.send),
-                        label: const Text('Envoyer'),
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                SizedBox(
-                  width: double.infinity,
-                  child: TextButton.icon(
-                    onPressed: () async {
-                      await SharePlus.instance.share(ShareParams(text: shareText, subject: widget.video.title));
-                    },
-                    icon: const Icon(Icons.ios_share),
-                    label: const Text('Autres applications'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  Future<void> _shareVideo() async => _showVideoActions();
 
   // Fonction pour formater les grands nombres
   String _formatCount(int count) {
@@ -991,6 +777,7 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
     _durationSubscription?.cancel();
     _playingSubscription?.cancel();
     _completedSubscription?.cancel();
+    _position.dispose();
     player.pause();
     VideoPlaybackCoordinator.unregister(_playerId);
     player.dispose(); // Très important pour éviter les fuites de mémoire vive
@@ -1007,7 +794,9 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
           final isTabletOrDesktop = constraints.maxWidth >= 768;
           final commentsPanel = VideoCommentsPanel(
             videoId: widget.video.id,
+            highlightCommentId: widget.highlightCommentId,
             onClose: _toggleCommentsPanel,
+            videoOwnerId: widget.video.authorId,
             onCountChanged: (count) {
               if (mounted && count != _commentsCount) setState(() => _commentsCount = count);
             },
@@ -1037,7 +826,6 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
           return Column(
             children: [
               Expanded(child: _buildVideoSurface()),
-              _buildPlaybackBar(),
               if (_showCommentsPanel)
                 SizedBox(height: commentsHeight, child: commentsPanel),
             ],
@@ -1058,7 +846,7 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
           child: Video(
             controller: controller,
             controls: NoVideoControls,
-            fit: BoxFit.contain,
+            fit: _videoFit(),
           ),
         ),
         if (!_isPlaying)
@@ -1092,27 +880,9 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
               ),
             ),
           ),
-        // Dégradé bas : texte lisible sans boîte noire
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: 300,
-          child: IgnorePointer(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.bottomCenter,
-                  end: Alignment.topCenter,
-                  colors: [Colors.black.withValues(alpha: 0.75), Colors.transparent],
-                ),
-              ),
-            ),
-          ),
-        ),
         Positioned(
           left: 16,
-          bottom: 20,
+          bottom: 20 + MediaQuery.paddingOf(context).bottom,
           child: ConstrainedBox(
             constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.66),
             child: Column(
@@ -1157,7 +927,7 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
         ),
         Positioned(
           right: 10,
-          bottom: 20,
+          bottom: 20 + MediaQuery.paddingOf(context).bottom,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -1190,7 +960,66 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
             ],
           ),
         ),
+        if (MediaQuery.sizeOf(context).width < 768) _buildProgressLine(),
       ],
+    );
+  }
+
+  // Vidéo verticale : elle remplit tout l'écran ; sinon elle reste entière
+  BoxFit _videoFit() {
+    if (MediaQuery.sizeOf(context).width >= 768) return BoxFit.contain;
+    final width = player.state.width;
+    final height = player.state.height;
+    if (width != null && height != null && width > 0 && height > width * 1.2) {
+      return BoxFit.cover;
+    }
+    return BoxFit.contain;
+  }
+
+  // Ligne d'avancement fine, sans fond, collée en bas de la vidéo
+  // (juste au-dessus des boutons Accueil, Amis...). On peut la toucher ou la faire glisser.
+  Widget _buildProgressLine() => ValueListenableBuilder<Duration>(
+        valueListenable: _position,
+        builder: (context, position, _) => _progressLineFor(position),
+      );
+
+  Widget _progressLineFor(Duration position) {
+    final durationMs = _duration.inMilliseconds;
+    final progress = durationMs > 0 ? (position.inMilliseconds / durationMs).clamp(0.0, 1.0) : 0.0;
+
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: MediaQuery.paddingOf(context).bottom,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          void seekTo(double dx) {
+            if (durationMs <= 0 || constraints.maxWidth <= 0) return;
+            final fraction = (dx / constraints.maxWidth).clamp(0.0, 1.0);
+            player.seek(Duration(milliseconds: (durationMs * fraction).round()));
+          }
+
+          return GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTapDown: (details) => seekTo(details.localPosition.dx),
+            onHorizontalDragUpdate: (details) => seekTo(details.localPosition.dx),
+            child: SizedBox(
+              height: 20,
+              child: Align(
+                alignment: Alignment.bottomLeft,
+                child: Container(
+                  height: 2.5,
+                  width: constraints.maxWidth * progress,
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    boxShadow: [BoxShadow(color: Color(0x66000000), blurRadius: 2)],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -1202,7 +1031,7 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
     }
     final hasPhoto = photo != null && photo.startsWith('http');
     final initial = widget.video.username.isNotEmpty ? widget.video.username[0].toUpperCase() : '?';
-    return GestureDetector(
+    final avatar = GestureDetector(
       onTap: _openProfile,
       child: Container(
         padding: const EdgeInsets.all(2),
@@ -1217,6 +1046,77 @@ class _VideoPlayerItemState extends State<VideoPlayerItem> with SingleTickerProv
         ),
       ),
     );
+
+    // Petit « + » au bord du rond tant qu'on ne suit pas l'auteur : un toucher suffit pour s'abonner
+    final showPlus = !_isOwnVideo && !_authorFollowed;
+    return SizedBox(
+      width: 52,
+      height: 62,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.topCenter,
+        children: [
+          avatar,
+          Positioned(
+            bottom: 0,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 250),
+              opacity: showPlus ? 1 : 0,
+              child: IgnorePointer(
+                ignoring: !showPlus,
+                child: GestureDetector(
+                  onTap: _followAuthor,
+                  child: Container(
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: ReemColors.like,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 1.5),
+                    ),
+                    child: _followBusy
+                        ? const Padding(
+                            padding: EdgeInsets.all(4),
+                            child: CircularProgressIndicator(strokeWidth: 1.8, color: Colors.white),
+                          )
+                        : const Icon(Icons.add_rounded, color: Colors.white, size: 16),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---- Abonnement à l'auteur depuis la vidéo ----
+
+  bool _followBusy = false;
+
+  bool get _authorFollowed =>
+      FollowCache.stateOf(widget.video.authorId) ?? widget.video.isAuthorFollowed;
+
+  bool get _isOwnVideo {
+    final me = _sessionManager.currentUser?['id'];
+    return me != null && '$me' == '${widget.video.authorId}';
+  }
+
+  Future<void> _followAuthor() async {
+    if (!_sessionManager.isAuthenticated) {
+      _goToAuth();
+      return;
+    }
+    if (_followBusy) return;
+
+    setState(() => _followBusy = true);
+    try {
+      final result = await UserService().toggleFollow(widget.video.authorId, _sessionManager.authToken!);
+      if (result != null) {
+        FollowCache.set(widget.video.authorId, result['following'] == true);
+      }
+    } catch (_) {}
+    if (mounted) setState(() => _followBusy = false);
   }
 
   Widget _buildActionButton(IconData icon, String label, Color color, {required VoidCallback onTap}) {

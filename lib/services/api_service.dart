@@ -1,4 +1,3 @@
-```dart
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/video.dart';
@@ -50,4 +49,3 @@ class ApiService {
     }
   }
 }
-```

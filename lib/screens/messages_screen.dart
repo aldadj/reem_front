@@ -1,10 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../services/app_settings.dart';
 import '../services/inbox_service.dart';
 import '../services/session_manager.dart';
 import '../theme/reem_theme.dart';
+import '../utils/date_labels.dart';
 import '../utils/media_url.dart';
 import 'chat_screen.dart';
 import 'login_screen.dart';
@@ -14,7 +17,10 @@ import 'video_viewer_screen.dart';
 class MessagesScreen extends StatefulWidget {
   final ValueChanged<int>? onUnreadCountChanged;
 
-  const MessagesScreen({super.key, this.onUnreadCountChanged});
+  /// Espace réservé en bas pour la barre de navigation flottante.
+  final double bottomInset;
+
+  const MessagesScreen({super.key, this.onUnreadCountChanged, this.bottomInset = 0});
 
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
@@ -51,7 +57,10 @@ class _MessagesScreenState extends State<MessagesScreen> {
     ]);
     if (!mounted) return;
     setState(() {
-      _notifications = results[0];
+      // On n'affiche que les types de notifications choisis dans les Paramètres
+      _notifications = results[0]
+          .where((n) => AppSettings.instance.allowsNotificationType('${n['type']}'))
+          .toList();
       _conversations = results[1];
       _isLoading = false;
     });
@@ -71,6 +80,13 @@ class _MessagesScreenState extends State<MessagesScreen> {
     if (value == null) return null;
     if (value is int) return value;
     return int.tryParse('$value');
+  }
+
+  // Aperçu du dernier message dans la liste des discussions
+  String _previewOf(Map last) {
+    if (last['deleted_at'] != null) return 'Message supprimé';
+    final body = '${last['body'] ?? ''}';
+    return body.startsWith('REEM_VIDEO:') ? '🎬 Vidéo' : body;
   }
 
   // ---------------------------------------------------------------------------
@@ -116,7 +132,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
     }
 
     if (page == null) return;
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => page!));
+    final target = page;
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => target));
     if (mounted) _loadData();
   }
 
@@ -200,19 +217,72 @@ class _MessagesScreenState extends State<MessagesScreen> {
     return ok;
   }
 
+  /// Appui long sur une discussion (indispensable sur le web, où le glissement est peu pratique).
+  Future<void> _showConversationMenu(Map<String, dynamic> conversation, String name) async {
+    HapticFeedback.mediumImpact();
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => SafeArea(
+        child: Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: sheetContext.reem.surface,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: sheetContext.reem.border),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+                child: Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: sheetContext.reem.text, fontWeight: FontWeight.w800, fontSize: 16),
+                ),
+              ),
+              ListTile(
+                leading: Icon(Icons.chat_bubble_outline_rounded, color: sheetContext.reem.text),
+                title: Text('Ouvrir', style: TextStyle(color: sheetContext.reem.text)),
+                onTap: () => Navigator.pop(sheetContext, 'open'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline_rounded, color: ReemColors.like),
+                title: const Text('Supprimer la discussion', style: TextStyle(color: ReemColors.like)),
+                onTap: () => Navigator.pop(sheetContext, 'delete'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    if (action == 'open') {
+      _openConversation(conversation);
+    } else if (action == 'delete') {
+      final ok = await _deleteConversation(conversation);
+      if (ok && mounted) {
+        setState(() => _conversations.removeWhere((c) => c['id'] == conversation['id']));
+      }
+    }
+  }
+
   Future<bool?> _confirm({required String title, required String message, required String action}) {
     return showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: Text(title),
-        content: Text(message, style: const TextStyle(color: ReemColors.textSecondary)),
+        content: Text(message, style: TextStyle(color: dialogContext.reem.textSecondary)),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Annuler', style: TextStyle(color: Colors.white70)),
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text('Annuler', style: TextStyle(color: dialogContext.reem.textSecondary)),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogContext, true),
             child: Text(action, style: const TextStyle(color: ReemColors.like)),
           ),
         ],
@@ -252,15 +322,14 @@ class _MessagesScreenState extends State<MessagesScreen> {
   // INTERFACE
   // ---------------------------------------------------------------------------
 
-  String _timeAgo(dynamic value) {
-    final date = DateTime.tryParse('$value')?.toLocal();
-    if (date == null) return '';
-    final diff = DateTime.now().difference(date);
-    if (diff.inDays >= 7) return '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}';
-    if (diff.inDays >= 1) return 'il y a ${diff.inDays} j';
-    if (diff.inHours >= 1) return 'il y a ${diff.inHours} h';
-    if (diff.inMinutes >= 1) return 'il y a ${diff.inMinutes} min';
-    return 'à l’instant';
+  String _conversationStamp(dynamic value) {
+    final date = DateLabels.parse(value);
+    return date == null ? '' : DateLabels.conversationStamp(date);
+  }
+
+  String _notificationStamp(dynamic value) {
+    final date = DateLabels.parse(value);
+    return date == null ? '' : DateLabels.notificationStamp(date);
   }
 
   @override
@@ -275,20 +344,20 @@ class _MessagesScreenState extends State<MessagesScreen> {
             padding: const EdgeInsets.fromLTRB(20, 10, 8, 4),
             child: Row(
               children: [
-                const Expanded(
+                Expanded(
                   child: Text(
                     'Messages',
-                    style: TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w800),
+                    style: TextStyle(color: context.reem.text, fontSize: 26, fontWeight: FontWeight.w800),
                   ),
                 ),
                 IconButton(
                   tooltip: 'Nouveau message',
-                  icon: const Icon(Icons.edit_square, color: Colors.white),
+                  icon: Icon(Icons.edit_square, color: context.reem.text),
                   onPressed: _showNewMessageSheet,
                 ),
                 PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
-                  color: ReemColors.surfaceHigh,
+                  icon: Icon(Icons.more_vert_rounded, color: context.reem.text),
+                  color: context.reem.surfaceHigh,
                   onSelected: (value) {
                     switch (value) {
                       case 'read':
@@ -313,7 +382,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
             margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
             padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
-              color: ReemColors.surface,
+              color: context.reem.surface,
               borderRadius: BorderRadius.circular(16),
             ),
             child: TabBar(
@@ -324,7 +393,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                 borderRadius: BorderRadius.circular(12),
               ),
               labelColor: Colors.white,
-              unselectedLabelColor: Colors.white60,
+              unselectedLabelColor: context.reem.textMuted,
               labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
               splashBorderRadius: BorderRadius.circular(12),
               tabs: [
@@ -344,7 +413,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                           ),
                           child: Text(
                             _unreadCount > 99 ? '99+' : '$_unreadCount',
-                            style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800),
+                            style: TextStyle(color: context.reem.text, fontSize: 11, fontWeight: FontWeight.w800),
                           ),
                         ),
                       ],
@@ -386,16 +455,16 @@ class _MessagesScreenState extends State<MessagesScreen> {
               child: const Icon(Icons.chat_bubble_rounded, color: Colors.white, size: 40),
             ),
             const SizedBox(height: 22),
-            const Text(
+            Text(
               'Tes messages et notifications',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800),
+              style: TextStyle(color: context.reem.text, fontSize: 20, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 10),
-            const Text(
+            Text(
               'Connecte-toi pour voir les likes, commentaires et nouveaux abonnés, et discuter avec les autres.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: ReemColors.textSecondary, fontSize: 14, height: 1.4),
+              style: TextStyle(color: context.reem.textSecondary, fontSize: 14, height: 1.4),
             ),
             const SizedBox(height: 24),
             ElevatedButton(
@@ -414,14 +483,15 @@ class _MessagesScreenState extends State<MessagesScreen> {
   Widget _emptyState({required IconData icon, required String title, required String subtitle, Widget? action}) {
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
+      padding: EdgeInsets.only(bottom: widget.bottomInset),
       children: [
         const SizedBox(height: 70),
-        Icon(icon, size: 64, color: Colors.white24),
+        Icon(icon, size: 64, color: context.reem.border),
         const SizedBox(height: 16),
         Text(
           title,
           textAlign: TextAlign.center,
-          style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700),
+          style: TextStyle(color: context.reem.text, fontSize: 17, fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 8),
         Padding(
@@ -429,7 +499,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
           child: Text(
             subtitle,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: ReemColors.textMuted, height: 1.4),
+            style: TextStyle(color: context.reem.textMuted, height: 1.4),
           ),
         ),
         if (action != null) ...[
@@ -467,14 +537,18 @@ class _MessagesScreenState extends State<MessagesScreen> {
             )
           : ListView.builder(
               physics: const AlwaysScrollableScrollPhysics(),
+              padding: EdgeInsets.only(bottom: widget.bottomInset),
               itemCount: _conversations.length,
               itemBuilder: (context, index) {
                 final conversation = Map<String, dynamic>.from(_conversations[index] as Map);
                 final other = _otherParticipant(conversation);
                 final messages = (conversation['messages'] as List<dynamic>?) ?? [];
-                final last = messages.isNotEmpty ? messages.first as Map : null;
+                final Map? last = messages.isNotEmpty ? messages.first as Map : null;
                 final mine = last != null && last['sender_id'] == _session.currentUser?['id'];
                 final name = other?['name']?.toString() ?? 'Discussion';
+                final preview = last != null
+                    ? '${mine ? 'Toi : ' : ''}${_previewOf(last)}'
+                    : 'Aucun message';
 
                 return Dismissible(
                   key: ValueKey('conv_${conversation['id']}'),
@@ -491,19 +565,20 @@ class _MessagesScreenState extends State<MessagesScreen> {
                       name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15.5),
+                      style: TextStyle(color: context.reem.text, fontWeight: FontWeight.w700, fontSize: 15.5),
                     ),
                     subtitle: Text(
-                      last != null ? '${mine ? 'Toi : ' : ''}${last['body'] ?? ''}' : 'Aucun message',
+                      preview,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: ReemColors.textMuted),
+                      style: TextStyle(color: context.reem.textMuted),
                     ),
                     trailing: Text(
-                      _timeAgo(last?['created_at'] ?? conversation['updated_at']),
-                      style: const TextStyle(color: ReemColors.textMuted, fontSize: 12),
+                      _conversationStamp(last?['created_at'] ?? conversation['updated_at']),
+                      style: TextStyle(color: context.reem.textMuted, fontSize: 12),
                     ),
                     onTap: () => _openConversation(conversation),
+                    onLongPress: () => _showConversationMenu(conversation, name),
                   ),
                 );
               },
@@ -542,6 +617,18 @@ class _MessagesScreenState extends State<MessagesScreen> {
   }
 
   Widget _buildNotifications() {
+    final entries = <Object>[];
+    String? lastGroup;
+    for (final item in _notifications) {
+      final date = DateLabels.parse(item['created_at']);
+      final group = date == null ? 'Plus tôt' : DateLabels.notificationGroup(date);
+      if (group != lastGroup) {
+        entries.add(group);
+        lastGroup = group;
+      }
+      entries.add(item);
+    }
+
     return RefreshIndicator(
       onRefresh: _loadData,
       child: _notifications.isEmpty
@@ -552,9 +639,20 @@ class _MessagesScreenState extends State<MessagesScreen> {
             )
           : ListView.builder(
               physics: const AlwaysScrollableScrollPhysics(),
-              itemCount: _notifications.length,
+              padding: EdgeInsets.only(bottom: widget.bottomInset),
+              itemCount: entries.length,
               itemBuilder: (context, index) {
-                final notification = Map<String, dynamic>.from(_notifications[index] as Map);
+                final entry = entries[index];
+                if (entry is String) {
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                    child: Text(
+                      entry,
+                      style: TextStyle(color: context.reem.text, fontSize: 15, fontWeight: FontWeight.w800),
+                    ),
+                  );
+                }
+                final notification = Map<String, dynamic>.from(entry as Map);
                 final actor = notification['actor'] is Map ? Map<String, dynamic>.from(notification['actor'] as Map) : null;
                 final type = '${notification['type']}';
                 final unread = notification['read_at'] == null;
@@ -585,9 +683,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
                               decoration: BoxDecoration(
                                 color: _typeColor(type),
                                 shape: BoxShape.circle,
-                                border: Border.all(color: ReemColors.background, width: 2),
+                                border: Border.all(color: context.reem.background, width: 2),
                               ),
-                              child: Icon(_typeIcon(type), color: Colors.white, size: 11),
+                              child: Icon(_typeIcon(type), color: context.reem.text, size: 11),
                             ),
                           ),
                         ],
@@ -597,7 +695,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: Colors.white,
+                          color: context.reem.text,
                           fontWeight: unread ? FontWeight.w700 : FontWeight.w500,
                           fontSize: 14.5,
                           height: 1.3,
@@ -606,8 +704,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
                       subtitle: Padding(
                         padding: const EdgeInsets.only(top: 3),
                         child: Text(
-                          _timeAgo(notification['created_at']),
-                          style: const TextStyle(color: ReemColors.textMuted, fontSize: 12),
+                          _notificationStamp(notification['created_at']),
+                          style: TextStyle(color: context.reem.textMuted, fontSize: 12),
                         ),
                       ),
                       trailing: unread
@@ -639,12 +737,12 @@ class _Avatar extends StatelessWidget {
     final photo = absoluteMediaUrl(url);
     return CircleAvatar(
       radius: radius,
-      backgroundColor: ReemColors.surfaceHigh,
+      backgroundColor: context.reem.surfaceHigh,
       backgroundImage: photo != null ? NetworkImage(photo) : null,
       child: photo == null
           ? Text(
               name.isNotEmpty ? name[0].toUpperCase() : '?',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: radius * 0.8),
+              style: TextStyle(color: context.reem.text, fontWeight: FontWeight.w700, fontSize: radius * 0.8),
             )
           : null,
     );
@@ -708,11 +806,11 @@ class _NewMessageSheetState extends State<_NewMessageSheet> {
         height: height,
         child: Column(
           children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Text('Nouveau message', style: TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.w800)),
+                child: Text('Nouveau message', style: TextStyle(color: context.reem.text, fontSize: 19, fontWeight: FontWeight.w800)),
               ),
             ),
             Padding(
@@ -721,10 +819,10 @@ class _NewMessageSheetState extends State<_NewMessageSheet> {
                 controller: _controller,
                 autofocus: true,
                 onChanged: _onChanged,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
+                style: TextStyle(color: context.reem.text),
+                decoration: InputDecoration(
                   hintText: 'Rechercher un nom ou @utilisateur',
-                  prefixIcon: Icon(Icons.search_rounded, color: ReemColors.textMuted),
+                  prefixIcon: Icon(Icons.search_rounded, color: context.reem.textMuted),
                 ),
               ),
             ),
@@ -735,7 +833,7 @@ class _NewMessageSheetState extends State<_NewMessageSheet> {
                       ? Center(
                           child: Text(
                             _lastTerm.length >= 2 ? 'Personne trouvé(e)' : 'Tape au moins 2 lettres',
-                            style: const TextStyle(color: ReemColors.textMuted),
+                            style: TextStyle(color: context.reem.textMuted),
                           ),
                         )
                       : ListView.builder(
@@ -749,9 +847,9 @@ class _NewMessageSheetState extends State<_NewMessageSheet> {
                                 name: user['name']?.toString() ?? '?',
                                 radius: 22,
                               ),
-                              title: Text('${user['name']}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                              title: Text('${user['name']}', style: TextStyle(color: context.reem.text, fontWeight: FontWeight.w600)),
                               subtitle: username != null && username.isNotEmpty
-                                  ? Text('@$username', style: const TextStyle(color: ReemColors.textMuted))
+                                  ? Text('@$username', style: TextStyle(color: context.reem.textMuted))
                                   : null,
                               onTap: () => widget.onUserChosen(user),
                             );

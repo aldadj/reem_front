@@ -1,9 +1,10 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import '../services/app_settings.dart';
+import '../theme/reem_theme.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
@@ -13,6 +14,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../services/auth_service.dart';
 import '../services/session_manager.dart';
 import '../services/video_edit_service.dart';
+import '../widgets/publish_form.dart';
 
 class PublishScreen extends StatefulWidget {
   final String videoPath;
@@ -27,7 +29,8 @@ class PublishScreen extends StatefulWidget {
 }
 
 class _PublishScreenState extends State<PublishScreen> {
-  final TextEditingController _titleController = TextEditingController();
+  final TextEditingController _descriptionController = TextEditingController();
+  String _visibility = AppSettings.instance.defaultVisibility;
 
   final VideoEditService _videoEditService = VideoEditService();
   late final Player _player;
@@ -396,13 +399,6 @@ class _PublishScreenState extends State<PublishScreen> {
   Future<void> _uploadVideoToLaravel() async {
     if (_isSaving || _isSending) return;
 
-    if (_titleController.text.trim().isEmpty) {
-      _showErrorSnackBar(
-        'Veuillez donner un titre à votre Reel !',
-      );
-      return;
-    }
-
     if (_fileErrorMessage != null) {
       _showErrorSnackBar(
         _fileErrorMessage!,
@@ -419,12 +415,7 @@ class _PublishScreenState extends State<PublishScreen> {
   }
 
   Future<void> _performUpload(String videoPath) async {
-    if (_titleController.text.trim().isEmpty) {
-      _showErrorSnackBar(
-        'Veuillez donner un titre à votre Reel !',
-      );
-      return;
-    }
+    FocusScope.of(context).unfocus();
 
     if (!mounted) return;
 
@@ -494,17 +485,14 @@ class _PublishScreenState extends State<PublishScreen> {
       request.headers['Accept'] =
           'application/json';
 
-      request.fields['title'] =
-          _titleController.text.trim();
+      // Une seule description, comme sur TikTok : le titre en est tiré automatiquement
+      final description = _descriptionController.text.trim();
+      if (description.isNotEmpty) {
+        request.fields['title'] = titleFromCaption(description);
+        request.fields['description'] = description;
+      }
 
-      request.fields['description'] =
-          _titleController.text.trim();
-
-      request.fields['caption'] =
-          _titleController.text.trim();
-
-      request.fields['visibility'] =
-          'public';
+      request.fields['visibility'] = _visibility;
 
       _videoFileName =
           _getFileName(videoPath);
@@ -569,24 +557,8 @@ class _PublishScreenState extends State<PublishScreen> {
           '❌ Erreur Laravel : ${response.statusCode}',
         );
 
-        String message =
-            'Échec de la publication.';
-
-        try {
-          final body =
-              jsonDecode(response.body);
-
-          if (body is Map &&
-              body['message'] is String) {
-            message = body['message'];
-          } else if (body is Map) {
-            message = body.toString();
-          }
-        } catch (_) {
-          if (response.body.isNotEmpty) {
-            message = response.body;
-          }
-        }
+        final message =
+            parsePublishError(response.body);
 
         if (mounted) {
           _showErrorSnackBar(message);
@@ -702,7 +674,7 @@ class _PublishScreenState extends State<PublishScreen> {
   void dispose() {
     _client?.close();
 
-    _titleController.dispose();
+    _descriptionController.dispose();
 
     _positionSubscription?.cancel();
     _durationSubscription?.cancel();
@@ -712,16 +684,24 @@ class _PublishScreenState extends State<PublishScreen> {
     super.dispose();
   }
 
+  // Écran toujours sombre (caméra, montage, photo) quel que soit le thème choisi
   @override
   Widget build(BuildContext context) {
+    return Theme(
+      data: ReemTheme.dark(),
+      child: Builder(builder: _buildBody),
+    );
+  }
+
+  Widget _buildBody(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF060816),
+      backgroundColor: const Color(0xFF06030F),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         title: Text(
-          _isFinalPreview ? 'Aperçu avant publication' : 'Modifier la vidéo',
-          style: TextStyle(
+          _isFinalPreview ? 'Nouvelle publication' : 'Modifier la vidéo',
+          style: const TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.bold,
           ),
@@ -733,7 +713,12 @@ class _PublishScreenState extends State<PublishScreen> {
             color: Colors.white,
           ),
           onPressed: () {
-            Navigator.of(context).pop();
+            if (_isSending) return;
+            if (_isFinalPreview) {
+              _returnToEditor();
+            } else {
+              Navigator.of(context).pop();
+            }
           },
         ),
       ),
@@ -931,77 +916,219 @@ class _PublishScreenState extends State<PublishScreen> {
   }
 
   Widget _buildFinalPreview() {
+    String? fileSize;
+    final preparedPath = _preparedVideoPath;
+    if (preparedPath != null) {
+      try {
+        final file = File(preparedPath);
+        if (file.existsSync()) fileSize = _formatBytes(file.lengthSync());
+      } catch (_) {}
+    }
+    final maxMs = _videoDuration.inMilliseconds.toDouble().clamp(1, double.infinity).toDouble();
+    final positionMs = _videoPosition.inMilliseconds.toDouble().clamp(0, maxMs).toDouble();
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 760;
+
+        if (wide) {
+          // Ordinateur / grand écran : grand aperçu à gauche, formulaire à droite
+          return Row(
+            children: [
+              Expanded(child: _bigPreview(maxMs, positionMs)),
+              Container(
+                width: 520,
+                color: const Color(0xFF150E26),
+                child: _finalForm(fileSize, cover: null),
+              ),
+            ],
+          );
+        }
+
+        // Téléphone : description + petit aperçu en haut, boutons toujours visibles en bas
+        return Container(
+          color: const Color(0xFF150E26),
+          child: _finalForm(fileSize, cover: _smallPreview()),
+        );
+      },
+    );
+  }
+
+  /// Formulaire de publication défilant + barre d'actions fixe en bas.
+  Widget _finalForm(String? fileSize, {required Widget? cover}) {
     return Column(
       children: [
         Expanded(
-          child: Container(
-            width: double.infinity,
-            color: const Color(0xFF333333),
-            alignment: Alignment.center,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                PublishForm(
+                  captionController: _descriptionController,
+                  visibility: _visibility,
+                  enabled: !_isSending,
+                  cover: cover,
+                  onVisibilityChanged: (value) => setState(() => _visibility = value),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    const Icon(Icons.movie_creation_outlined, color: Colors.white54, size: 16),
+                    const SizedBox(width: 6),
+                    Text(
+                      [
+                        _formatDuration(_videoDuration.inMilliseconds),
+                        if (fileSize != null) fileSize,
+                      ].join('  ·  '),
+                      style: const TextStyle(color: Colors.white54, fontSize: 12.5),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF150E26),
+            border: Border(top: BorderSide(color: Color(0x14FFFFFF))),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _isSending ? null : _returnToEditor,
+                      icon: const Icon(Icons.edit_outlined, size: 20),
+                      label: const Text('Modifier'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: _isSaving || _isSending ? null : ReemColors.gradient,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: ElevatedButton.icon(
+                        onPressed: _isSaving || _isSending ? null : _uploadVideoToLaravel,
+                        icon: const Icon(Icons.publish_rounded),
+                        label: const Text('Publier'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          shadowColor: Colors.transparent,
+                          disabledBackgroundColor: ReemColors.surfaceHigh,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Petit aperçu à droite de la description (toucher : lecture / pause).
+  Widget _smallPreview() {
+    return GestureDetector(
+      onTap: () => _isPlaying ? _player.pause() : _player.play(),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          width: 96,
+          height: 134,
+          color: Colors.black,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Video(controller: _playerController, controls: NoVideoControls, fit: BoxFit.cover),
+              if (!_isPlaying)
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: const BoxDecoration(color: Colors.black45, shape: BoxShape.circle),
+                    child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 26),
+                  ),
+                ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  color: Colors.black54,
+                  child: const Text(
+                    'Aperçu',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Grand aperçu (version large) : toucher pour lire / mettre en pause.
+  Widget _bigPreview(double maxMs, double positionMs) {
+    return Container(
+      width: double.infinity,
+      color: Colors.black,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => _isPlaying ? _player.pause() : _player.play(),
             child: Video(
               controller: _playerController,
               controls: NoVideoControls,
               fit: BoxFit.contain,
             ),
           ),
-        ),
-        Container(
-          color: const Color(0xFF0F1628),
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-          child: Column(
-            children: [
-              Slider(
+          if (!_isPlaying)
+            IgnorePointer(
+              child: Center(
+                child: Icon(
+                  Icons.play_circle_filled,
+                  color: Colors.white.withValues(alpha: 0.8),
+                  size: 64,
+                ),
+              ),
+            ),
+          Positioned(
+            left: 4,
+            right: 4,
+            bottom: 0,
+            child: SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 2.5,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+              ),
+              child: Slider(
                 min: 0,
-                max: _videoDuration.inMilliseconds.toDouble().clamp(1, double.infinity),
-                value: _videoPosition.inMilliseconds.toDouble().clamp(
-                      0,
-                      _videoDuration.inMilliseconds.toDouble().clamp(1, double.infinity),
-                    ),
-                activeColor: Colors.redAccent,
+                max: maxMs,
+                value: positionMs,
+                activeColor: Colors.white,
+                inactiveColor: Colors.white30,
                 onChanged: (value) => _player.seek(Duration(milliseconds: value.round())),
               ),
-              Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    IconButton(
-                      tooltip: _isPlaying ? 'Pause' : 'Lire',
-                      icon: Icon(
-                        _isPlaying ? Icons.pause : Icons.play_arrow,
-                        color: Colors.white,
-                        size: 32,
-                      ),
-                      onPressed: () => _isPlaying ? _player.pause() : _player.play(),
-                    ),
-                    const Text('Aperçu final', style: TextStyle(color: Colors.white70)),
-                  ],
-              ),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _returnToEditor,
-                      icon: const Icon(Icons.edit_outlined),
-                      label: const Text('Modifier'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: _isSaving ? null : _uploadVideoToLaravel,
-                      icon: const Icon(Icons.publish),
-                      label: const Text('Publier'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF7C4DFF),
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -1011,7 +1138,7 @@ class _PublishScreenState extends State<PublishScreen> {
         maxHeight: MediaQuery.of(context).size.height * 0.48,
       ),
       child: Container(
-        color: const Color(0xFF0F1628),
+        color: const Color(0xFF150E26),
         padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
         child: SingleChildScrollView(
           child: Column(
@@ -1209,32 +1336,6 @@ class _PublishScreenState extends State<PublishScreen> {
 
           const SizedBox(height: 8),
 
-          TextField(
-            controller: _titleController,
-            style: const TextStyle(
-              color: Colors.white,
-            ),
-            decoration: InputDecoration(
-              hintText:
-                  'Ajoutez une légende...',
-              hintStyle: TextStyle(
-                color: Colors.grey[600],
-              ),
-              filled: true,
-              fillColor:
-                  const Color(0xFF1A1A2E),
-              border:
-                  OutlineInputBorder(
-                borderRadius:
-                    BorderRadius.circular(12),
-                borderSide:
-                    BorderSide.none,
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 8),
-
           SizedBox(
             width: double.infinity,
             height: 52,
@@ -1262,7 +1363,7 @@ class _PublishScreenState extends State<PublishScreen> {
                       ),
                     )
                     : const Text(
-                      'Prévisualiser',
+                      'Suivant',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 15,
