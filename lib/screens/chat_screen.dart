@@ -378,7 +378,7 @@ class _ChatScreenState extends State<ChatScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
               decoration: BoxDecoration(
-                color: context.reem.surfaceHigh,
+                color: Colors.black.withValues(alpha: 0.28),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: mine.contains(entry.key) ? ReemColors.primary : context.reem.border),
               ),
@@ -561,13 +561,14 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _daySeparator(String label) {
     return Center(
       child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        margin: const EdgeInsets.symmetric(vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
         decoration: BoxDecoration(
-          color: context.reem.surfaceHigh,
-          borderRadius: BorderRadius.circular(12),
+          color: context.reem.surface.withValues(alpha: 0.9),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: context.reem.border),
         ),
-        child: Text(label, style: TextStyle(color: context.reem.textSecondary, fontSize: 12, fontWeight: FontWeight.w600)),
+        child: Text(label, style: TextStyle(color: context.reem.textSecondary, fontSize: 12, fontWeight: FontWeight.w700)),
       ),
     );
   }
@@ -601,17 +602,26 @@ class _ChatScreenState extends State<ChatScreen> {
       child: GestureDetector(
         onLongPress: deleted ? null : () => _showMessageActions(message),
         child: Container(
-          margin: const EdgeInsets.only(bottom: 6),
+          margin: const EdgeInsets.only(bottom: 5),
           constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.78),
           padding: const EdgeInsets.fromLTRB(12, 8, 10, 6),
           decoration: BoxDecoration(
-            color: fromMe ? ReemColors.primary : context.reem.surface,
-            border: fromMe ? null : Border.all(color: context.reem.border),
+            gradient: fromMe
+                ? const LinearGradient(
+                    colors: [Color(0xFF9A63FF), Color(0xFF6C34E6)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  )
+                : null,
+            color: fromMe ? null : context.reem.surfaceHigh,
+            boxShadow: fromMe
+                ? [BoxShadow(color: ReemColors.primary.withValues(alpha: 0.25), blurRadius: 10, offset: const Offset(0, 3))]
+                : null,
             borderRadius: BorderRadius.only(
-              topLeft: const Radius.circular(16),
-              topRight: const Radius.circular(16),
-              bottomLeft: Radius.circular(fromMe ? 16 : 4),
-              bottomRight: Radius.circular(fromMe ? 4 : 16),
+              topLeft: const Radius.circular(20),
+              topRight: const Radius.circular(20),
+              bottomLeft: Radius.circular(fromMe ? 20 : 6),
+              bottomRight: Radius.circular(fromMe ? 6 : 20),
             ),
           ),
           child: IntrinsicWidth(
@@ -649,30 +659,47 @@ class _ChatScreenState extends State<ChatScreen> {
     final photo = absoluteMediaUrl(_otherUserPhoto);
     final name = _otherUserName ?? 'Discussion';
     final timeline = _timeline().reversed.toList();
+    final canSend = _messageController.text.trim().isNotEmpty && !_isSending;
 
     return Scaffold(
+      backgroundColor: context.reem.background,
       appBar: AppBar(
         centerTitle: false,
         titleSpacing: 0,
+        backgroundColor: context.reem.sidebar,
+        surfaceTintColor: Colors.transparent,
+        shape: Border(bottom: BorderSide(color: context.reem.border)),
         title: Row(
           children: [
-            CircleAvatar(
-              radius: 18,
-              backgroundColor: context.reem.surfaceHigh,
-              backgroundImage: photo != null ? NetworkImage(photo) : null,
-              child: photo == null
-                  ? Text(name.isNotEmpty ? name[0].toUpperCase() : '?', style: TextStyle(color: context.reem.text, fontWeight: FontWeight.w700))
-                  : null,
+            Container(
+              padding: const EdgeInsets.all(2),
+              decoration: const BoxDecoration(gradient: ReemColors.gradient, shape: BoxShape.circle),
+              child: CircleAvatar(
+                radius: 18,
+                backgroundColor: context.reem.surfaceHigh,
+                backgroundImage: photo != null ? NetworkImage(photo) : null,
+                child: photo == null
+                    ? Text(name.isNotEmpty ? name[0].toUpperCase() : '?',
+                        style: TextStyle(color: context.reem.text, fontWeight: FontWeight.w800))
+                    : null,
+              ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 12),
             Expanded(
-              child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+              child: Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
+              ),
             ),
           ],
         ),
         actions: [
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert_rounded),
+            color: context.reem.surfaceHigh,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             onSelected: (value) {
               if (value == 'delete') _confirmDeleteConversation();
             },
@@ -691,92 +718,120 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _messages.isEmpty
-                    ? Center(
-                        child: Text(
-                          'Aucun message pour le moment.\nDis bonjour !',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: context.reem.textMuted, height: 1.4),
-                        ),
-                      )
-                    : ListView.builder(
-                        controller: _scroll,
-                        reverse: true, // on démarre en bas, sur le dernier message
-                        padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
-                        itemCount: timeline.length,
-                        itemBuilder: (context, index) {
-                          final entry = timeline[index];
-                          if (entry is String) return _daySeparator(entry);
-                          return _bubble(Map<String, dynamic>.from(entry as Map));
-                        },
-                      ),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [context.reem.background, Color.lerp(context.reem.background, ReemColors.primary, 0.07)!],
           ),
-          _replyComposerBar(),
-          SafeArea(
-            top: false,
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-              decoration: BoxDecoration(
-                color: context.reem.background,
-                border: Border(top: BorderSide(color: context.reem.border)),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _messageController,
-                      minLines: 1,
-                      maxLines: 5,
-                      textCapitalization: TextCapitalization.sentences,
-                      style: TextStyle(color: context.reem.text),
-                      decoration: InputDecoration(
-                        hintText: 'Écrire un message…',
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide.none,
+        ),
+        child: Column(
+          children: [
+            Expanded(
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _messages.isEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 88,
+                                height: 88,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  gradient: RadialGradient(colors: [ReemColors.primary.withValues(alpha: 0.3), Colors.transparent]),
+                                ),
+                                child: const Icon(Icons.waving_hand_rounded, color: ReemColors.accent, size: 40),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                'Aucun message pour le moment.\nDis bonjour à $name !',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: context.reem.textMuted, height: 1.4),
+                              ),
+                            ],
+                          ),
+                        )
+                      : ListView.builder(
+                          controller: _scroll,
+                          reverse: true, // on démarre en bas, sur le dernier message
+                          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                          padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+                          itemCount: timeline.length,
+                          itemBuilder: (context, index) {
+                            final entry = timeline[index];
+                            if (entry is String) return _daySeparator(entry);
+                            return _bubble(Map<String, dynamic>.from(entry as Map));
+                          },
                         ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide.none,
+            ),
+            _replyComposerBar(),
+            SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: context.reem.surface,
+                          borderRadius: BorderRadius.circular(26),
+                          border: Border.all(color: context.reem.border),
+                        ),
+                        child: TextField(
+                          controller: _messageController,
+                          minLines: 1,
+                          maxLines: 5,
+                          textCapitalization: TextCapitalization.sentences,
+                          style: TextStyle(color: context.reem.text, fontSize: 15),
+                          decoration: InputDecoration(
+                            hintText: 'Écrire un message…',
+                            filled: false,
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                            border: InputBorder.none,
+                            enabledBorder: InputBorder.none,
+                            focusedBorder: InputBorder.none,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 6),
-                  GestureDetector(
-                    onTap: _messageController.text.trim().isEmpty || _isSending ? null : _sendMessage,
-                    child: Container(
-                      width: 46,
-                      height: 46,
-                      decoration: BoxDecoration(
-                        gradient: _messageController.text.trim().isEmpty ? null : ReemColors.gradient,
-                        color: _messageController.text.trim().isEmpty ? context.reem.surfaceHigh : null,
-                        shape: BoxShape.circle,
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: canSend ? _sendMessage : null,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          gradient: canSend || _isSending ? ReemColors.gradient : null,
+                          color: canSend || _isSending ? null : context.reem.surfaceHigh,
+                          shape: BoxShape.circle,
+                          boxShadow: canSend
+                              ? [BoxShadow(color: ReemColors.primary.withValues(alpha: 0.45), blurRadius: 14, offset: const Offset(0, 4))]
+                              : null,
+                        ),
+                        child: _isSending
+                            ? const Padding(
+                                padding: EdgeInsets.all(14),
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : Icon(
+                                Icons.send_rounded,
+                                color: canSend ? Colors.white : context.reem.textMuted,
+                                size: 22,
+                              ),
                       ),
-                      child: _isSending
-                          ? const Padding(
-                              padding: EdgeInsets.all(13),
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : Icon(
-                              Icons.send_rounded,
-                              color: _messageController.text.trim().isEmpty ? context.reem.textMuted : Colors.white,
-                              size: 22,
-                            ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

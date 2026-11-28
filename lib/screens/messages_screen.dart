@@ -30,6 +30,10 @@ class _MessagesScreenState extends State<MessagesScreen> {
   final SessionManager _session = SessionManager();
   final InboxService _inbox = InboxService();
 
+  final TextEditingController _search = TextEditingController();
+  String _query = '';
+  bool _onlyUnread = false;
+
   bool _isLoading = true;
   List<dynamic> _notifications = [];
   List<dynamic> _conversations = [];
@@ -38,6 +42,12 @@ class _MessagesScreenState extends State<MessagesScreen> {
   void initState() {
     super.initState();
     _loadData(showSpinner: true);
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
   }
 
   // ---------------------------------------------------------------------------
@@ -341,23 +351,25 @@ class _MessagesScreenState extends State<MessagesScreen> {
       child: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 10, 8, 4),
+            padding: const EdgeInsets.fromLTRB(20, 12, 14, 6),
             child: Row(
               children: [
                 Expanded(
-                  child: Text(
-                    'Messages',
-                    style: TextStyle(color: context.reem.text, fontSize: 26, fontWeight: FontWeight.w800),
+                  child: ShaderMask(
+                    shaderCallback: (rect) => ReemColors.gradient.createShader(rect),
+                    child: const Text(
+                      'Messages',
+                      style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: -0.5),
+                    ),
                   ),
                 ),
-                IconButton(
-                  tooltip: 'Nouveau message',
-                  icon: Icon(Icons.edit_square, color: context.reem.text),
-                  onPressed: _showNewMessageSheet,
-                ),
+                _roundAction(Icons.edit_square, 'Nouveau message', _showNewMessageSheet),
+                const SizedBox(width: 8),
                 PopupMenuButton<String>(
-                  icon: Icon(Icons.more_vert_rounded, color: context.reem.text),
+                  tooltip: 'Plus',
                   color: context.reem.surfaceHigh,
+                  offset: const Offset(0, 46),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                   onSelected: (value) {
                     switch (value) {
                       case 'read':
@@ -368,34 +380,39 @@ class _MessagesScreenState extends State<MessagesScreen> {
                         _loadData(showSpinner: true);
                     }
                   },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'read', child: Text('Tout marquer comme lu')),
-                    PopupMenuItem(value: 'clear', child: Text('Effacer les notifications')),
-                    PopupMenuItem(value: 'refresh', child: Text('Actualiser')),
+                  itemBuilder: (_) => [
+                    _menuItem('read', Icons.done_all_rounded, 'Tout marquer comme lu'),
+                    _menuItem('clear', Icons.delete_sweep_rounded, 'Effacer les notifications'),
+                    _menuItem('refresh', Icons.refresh_rounded, 'Actualiser'),
                   ],
+                  child: _roundIcon(Icons.more_horiz_rounded),
                 ),
               ],
             ),
           ),
           Container(
-            height: 46,
-            margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            height: 48,
+            margin: const EdgeInsets.fromLTRB(16, 8, 16, 6),
             padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
               color: context.reem.surface,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: context.reem.border),
             ),
             child: TabBar(
               dividerColor: Colors.transparent,
               indicatorSize: TabBarIndicatorSize.tab,
               indicator: BoxDecoration(
                 gradient: ReemColors.gradient,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [
+                  BoxShadow(color: ReemColors.primary.withValues(alpha: 0.35), blurRadius: 12, offset: const Offset(0, 3)),
+                ],
               ),
               labelColor: Colors.white,
               unselectedLabelColor: context.reem.textMuted,
-              labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-              splashBorderRadius: BorderRadius.circular(12),
+              labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+              splashBorderRadius: BorderRadius.circular(14),
               tabs: [
                 const Tab(text: 'Discussions'),
                 Tab(
@@ -407,13 +424,10 @@ class _MessagesScreenState extends State<MessagesScreen> {
                         const SizedBox(width: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: ReemColors.like,
-                            borderRadius: BorderRadius.circular(9),
-                          ),
+                          decoration: BoxDecoration(color: ReemColors.like, borderRadius: BorderRadius.circular(9)),
                           child: Text(
                             _unreadCount > 99 ? '99+' : '$_unreadCount',
-                            style: TextStyle(color: context.reem.text, fontSize: 11, fontWeight: FontWeight.w800),
+                            style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800),
                           ),
                         ),
                       ],
@@ -433,6 +447,39 @@ class _MessagesScreenState extends State<MessagesScreen> {
                     ],
                   ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _roundIcon(IconData icon) {
+    return Container(
+      width: 42,
+      height: 42,
+      decoration: BoxDecoration(
+        color: context.reem.surface,
+        shape: BoxShape.circle,
+        border: Border.all(color: context.reem.border),
+      ),
+      child: Icon(icon, color: context.reem.text, size: 21),
+    );
+  }
+
+  Widget _roundAction(IconData icon, String tooltip, VoidCallback onTap) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(onTap: onTap, child: _roundIcon(icon)),
+    );
+  }
+
+  PopupMenuItem<String> _menuItem(String value, IconData icon, String label) {
+    return PopupMenuItem<String>(
+      value: value,
+      child: Row(
+        children: [
+          Icon(icon, size: 19, color: context.reem.textSecondary),
+          const SizedBox(width: 12),
+          Text(label),
         ],
       ),
     );
@@ -486,7 +533,17 @@ class _MessagesScreenState extends State<MessagesScreen> {
       padding: EdgeInsets.only(bottom: widget.bottomInset),
       children: [
         const SizedBox(height: 70),
-        Icon(icon, size: 64, color: context.reem.border),
+        Center(
+          child: Container(
+            width: 96,
+            height: 96,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: RadialGradient(colors: [ReemColors.primary.withValues(alpha: 0.28), Colors.transparent]),
+            ),
+            child: Icon(icon, size: 46, color: ReemColors.primary),
+          ),
+        ),
         const SizedBox(height: 16),
         Text(
           title,
@@ -513,8 +570,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
   Widget _deleteBackground() {
     return Container(
       alignment: Alignment.centerRight,
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
       padding: const EdgeInsets.only(right: 24),
-      color: ReemColors.like,
+      decoration: BoxDecoration(color: ReemColors.like, borderRadius: BorderRadius.circular(20)),
       child: const Icon(Icons.delete_outline_rounded, color: Colors.white, size: 26),
     );
   }
@@ -522,11 +580,18 @@ class _MessagesScreenState extends State<MessagesScreen> {
   // ---- Discussions ----
 
   Widget _buildConversations() {
+    final q = _query.trim().toLowerCase();
+    final visible = _conversations.where((c) {
+      if (q.isEmpty) return true;
+      final other = _otherParticipant(Map<String, dynamic>.from(c as Map));
+      return (other?['name']?.toString().toLowerCase() ?? '').contains(q);
+    }).toList();
+
     return RefreshIndicator(
       onRefresh: _loadData,
       child: _conversations.isEmpty
           ? _emptyState(
-              icon: Icons.forum_outlined,
+              icon: Icons.forum_rounded,
               title: 'Aucune discussion',
               subtitle: 'Écris à quelqu’un pour commencer à discuter.',
               action: ElevatedButton.icon(
@@ -537,15 +602,48 @@ class _MessagesScreenState extends State<MessagesScreen> {
             )
           : ListView.builder(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: EdgeInsets.only(bottom: widget.bottomInset),
-              itemCount: _conversations.length,
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: EdgeInsets.only(bottom: widget.bottomInset + 8),
+              itemCount: visible.length + 1,
               itemBuilder: (context, index) {
-                final conversation = Map<String, dynamic>.from(_conversations[index] as Map);
+                if (index == 0) {
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
+                    child: TextField(
+                      controller: _search,
+                      onChanged: (v) => setState(() => _query = v),
+                      style: TextStyle(color: context.reem.text, fontSize: 14.5),
+                      decoration: InputDecoration(
+                        hintText: 'Rechercher une discussion',
+                        isDense: true,
+                        prefixIcon: Icon(Icons.search_rounded, color: context.reem.textMuted, size: 21),
+                        suffixIcon: _query.isEmpty
+                            ? null
+                            : IconButton(
+                                icon: Icon(Icons.close_rounded, color: context.reem.textMuted, size: 19),
+                                onPressed: () {
+                                  _search.clear();
+                                  setState(() => _query = '');
+                                },
+                              ),
+                        contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
+                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(18),
+                          borderSide: const BorderSide(color: ReemColors.primary, width: 1.2),
+                        ),
+                      ),
+                    ),
+                  );
+                }
+                final conversation = Map<String, dynamic>.from(visible[index - 1] as Map);
                 final other = _otherParticipant(conversation);
                 final messages = (conversation['messages'] as List<dynamic>?) ?? [];
                 final Map? last = messages.isNotEmpty ? messages.first as Map : null;
                 final mine = last != null && last['sender_id'] == _session.currentUser?['id'];
                 final name = other?['name']?.toString() ?? 'Discussion';
+                final unread = _asInt(conversation['unread_count']) ?? 0;
                 final preview = last != null
                     ? '${mine ? 'Toi : ' : ''}${_previewOf(last)}'
                     : 'Aucun message';
@@ -558,27 +656,82 @@ class _MessagesScreenState extends State<MessagesScreen> {
                   onDismissed: (_) => setState(
                     () => _conversations.removeWhere((c) => c['id'] == conversation['id']),
                   ),
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
-                    leading: _Avatar(url: other?['profile_photo_path']?.toString(), name: name, radius: 26),
-                    title: Text(
-                      name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: context.reem.text, fontWeight: FontWeight.w700, fontSize: 15.5),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+                    child: Material(
+                      color: unread > 0 ? ReemColors.primary.withValues(alpha: 0.10) : context.reem.surface,
+                      borderRadius: BorderRadius.circular(20),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(20),
+                        onTap: () => _openConversation(conversation),
+                        onLongPress: () => _showConversationMenu(conversation, name),
+                        child: Container(
+                          padding: const EdgeInsets.fromLTRB(12, 11, 14, 11),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: unread > 0 ? ReemColors.primary.withValues(alpha: 0.35) : context.reem.border),
+                          ),
+                          child: Row(
+                            children: [
+                              _RingAvatar(url: other?['profile_photo_path']?.toString(), name: name, radius: 25, ring: unread > 0),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(color: context.reem.text, fontWeight: FontWeight.w800, fontSize: 15.5),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      preview,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: unread > 0 ? context.reem.text : context.reem.textMuted,
+                                        fontWeight: unread > 0 ? FontWeight.w600 : FontWeight.w400,
+                                        fontSize: 13.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    _conversationStamp(last?['created_at'] ?? conversation['updated_at']),
+                                    style: TextStyle(
+                                      color: unread > 0 ? ReemColors.primary : context.reem.textMuted,
+                                      fontSize: 11.5,
+                                      fontWeight: unread > 0 ? FontWeight.w700 : FontWeight.w400,
+                                    ),
+                                  ),
+                                  if (unread > 0) ...[
+                                    const SizedBox(height: 6),
+                                    Container(
+                                      constraints: const BoxConstraints(minWidth: 20),
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(gradient: ReemColors.gradient, borderRadius: BorderRadius.circular(10)),
+                                      child: Text(
+                                        unread > 99 ? '99+' : '$unread',
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
-                    subtitle: Text(
-                      preview,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: context.reem.textMuted),
-                    ),
-                    trailing: Text(
-                      _conversationStamp(last?['created_at'] ?? conversation['updated_at']),
-                      style: TextStyle(color: context.reem.textMuted, fontSize: 12),
-                    ),
-                    onTap: () => _openConversation(conversation),
-                    onLongPress: () => _showConversationMenu(conversation, name),
                   ),
                 );
               },
@@ -616,10 +769,35 @@ class _MessagesScreenState extends State<MessagesScreen> {
     }
   }
 
+  Widget _filterChip(String label, bool selected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          gradient: selected ? ReemColors.gradient : null,
+          color: selected ? null : context.reem.surface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: selected ? Colors.transparent : context.reem.border),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.white : context.reem.textSecondary,
+            fontWeight: FontWeight.w700,
+            fontSize: 13,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildNotifications() {
-    final entries = <Object>[];
+    final source = _onlyUnread ? _notifications.where((n) => n['read_at'] == null).toList() : _notifications;
+    final entries = <Object>['__filters__'];
     String? lastGroup;
-    for (final item in _notifications) {
+    for (final item in source) {
       final date = DateLabels.parse(item['created_at']);
       final group = date == null ? 'Plus tôt' : DateLabels.notificationGroup(date);
       if (group != lastGroup) {
@@ -633,22 +811,46 @@ class _MessagesScreenState extends State<MessagesScreen> {
       onRefresh: _loadData,
       child: _notifications.isEmpty
           ? _emptyState(
-              icon: Icons.notifications_none_rounded,
+              icon: Icons.notifications_rounded,
               title: 'Aucune notification',
               subtitle: 'Les likes, commentaires et nouveaux abonnés apparaîtront ici.',
             )
           : ListView.builder(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: EdgeInsets.only(bottom: widget.bottomInset),
-              itemCount: entries.length,
+              padding: EdgeInsets.only(bottom: widget.bottomInset + 8),
+              itemCount: entries.length + (source.isEmpty ? 1 : 0),
               itemBuilder: (context, index) {
+                if (index >= entries.length) {
+                  return Padding(
+                    padding: const EdgeInsets.all(40),
+                    child: Center(
+                      child: Text('Tout est lu 🎉', style: TextStyle(color: context.reem.textMuted, fontSize: 15)),
+                    ),
+                  );
+                }
                 final entry = entries[index];
+                if (entry == '__filters__') {
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
+                    child: Row(
+                      children: [
+                        _filterChip('Toutes', !_onlyUnread, () => setState(() => _onlyUnread = false)),
+                        const SizedBox(width: 8),
+                        _filterChip(
+                          _unreadCount > 0 ? 'Non lues · $_unreadCount' : 'Non lues',
+                          _onlyUnread,
+                          () => setState(() => _onlyUnread = true),
+                        ),
+                      ],
+                    ),
+                  );
+                }
                 if (entry is String) {
                   return Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 6),
                     child: Text(
                       entry,
-                      style: TextStyle(color: context.reem.text, fontSize: 15, fontWeight: FontWeight.w800),
+                      style: TextStyle(color: context.reem.textSecondary, fontSize: 13.5, fontWeight: FontWeight.w800, letterSpacing: 0.3),
                     ),
                   );
                 }
@@ -667,60 +869,107 @@ class _MessagesScreenState extends State<MessagesScreen> {
                     setState(() => _notifications.removeWhere((n) => n['id'] == notification['id']));
                     _publishUnread();
                   },
-                  child: Container(
-                    color: unread ? ReemColors.primary.withValues(alpha: 0.08) : Colors.transparent,
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
-                      leading: Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          _Avatar(url: actor?['profile_photo_path']?.toString(), name: name, radius: 24),
-                          Positioned(
-                            right: -4,
-                            bottom: -4,
-                            child: Container(
-                              padding: const EdgeInsets.all(4),
-                              decoration: BoxDecoration(
-                                color: _typeColor(type),
-                                shape: BoxShape.circle,
-                                border: Border.all(color: context.reem.background, width: 2),
-                              ),
-                              child: Icon(_typeIcon(type), color: context.reem.text, size: 11),
-                            ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+                    child: Material(
+                      color: unread ? ReemColors.primary.withValues(alpha: 0.10) : context.reem.surface,
+                      borderRadius: BorderRadius.circular(20),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(20),
+                        onTap: () => _openNotification(notification),
+                        child: Container(
+                          padding: const EdgeInsets.fromLTRB(12, 12, 14, 12),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: unread ? ReemColors.primary.withValues(alpha: 0.35) : context.reem.border),
                           ),
-                        ],
-                      ),
-                      title: Text(
-                        notification['message']?.toString() ?? '',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: context.reem.text,
-                          fontWeight: unread ? FontWeight.w700 : FontWeight.w500,
-                          fontSize: 14.5,
-                          height: 1.3,
+                          child: Row(
+                            children: [
+                              Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  _Avatar(url: actor?['profile_photo_path']?.toString(), name: name, radius: 24),
+                                  Positioned(
+                                    right: -4,
+                                    bottom: -4,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(4.5),
+                                      decoration: BoxDecoration(
+                                        color: _typeColor(type),
+                                        shape: BoxShape.circle,
+                                        border: Border.all(color: context.reem.surface, width: 2),
+                                      ),
+                                      child: Icon(_typeIcon(type), color: Colors.white, size: 11),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      notification['message']?.toString() ?? '',
+                                      maxLines: 3,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: context.reem.text,
+                                        fontWeight: unread ? FontWeight.w700 : FontWeight.w500,
+                                        fontSize: 14.5,
+                                        height: 1.3,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      _notificationStamp(notification['created_at']),
+                                      style: TextStyle(color: context.reem.textMuted, fontSize: 12),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (unread) ...[
+                                const SizedBox(width: 10),
+                                Container(
+                                  width: 10,
+                                  height: 10,
+                                  decoration: const BoxDecoration(gradient: ReemColors.gradient, shape: BoxShape.circle),
+                                ),
+                              ],
+                            ],
+                          ),
                         ),
                       ),
-                      subtitle: Padding(
-                        padding: const EdgeInsets.only(top: 3),
-                        child: Text(
-                          _notificationStamp(notification['created_at']),
-                          style: TextStyle(color: context.reem.textMuted, fontSize: 12),
-                        ),
-                      ),
-                      trailing: unread
-                          ? Container(
-                              width: 10,
-                              height: 10,
-                              decoration: const BoxDecoration(color: ReemColors.primary, shape: BoxShape.circle),
-                            )
-                          : null,
-                      onTap: () => _openNotification(notification),
                     ),
                   ),
                 );
               },
             ),
+    );
+  }
+}
+
+/// Avatar avec un anneau dégradé (violet → orange) quand il y a du nouveau.
+class _RingAvatar extends StatelessWidget {
+  const _RingAvatar({required this.url, required this.name, required this.radius, this.ring = false});
+
+  final String? url;
+  final String name;
+  final double radius;
+  final bool ring;
+
+  @override
+  Widget build(BuildContext context) {
+    final avatar = _Avatar(url: url, name: name, radius: radius);
+    if (!ring) return avatar;
+    return Container(
+      padding: const EdgeInsets.all(2.5),
+      decoration: const BoxDecoration(gradient: ReemColors.gradient, shape: BoxShape.circle),
+      child: Container(
+        padding: const EdgeInsets.all(2),
+        decoration: BoxDecoration(color: context.reem.surface, shape: BoxShape.circle),
+        child: avatar,
+      ),
     );
   }
 }
@@ -799,7 +1048,7 @@ class _NewMessageSheetState extends State<_NewMessageSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final height = MediaQuery.sizeOf(context).height * 0.7;
+    final height = MediaQuery.sizeOf(context).height * 0.72;
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: SizedBox(
@@ -807,14 +1056,22 @@ class _NewMessageSheetState extends State<_NewMessageSheet> {
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text('Nouveau message', style: TextStyle(color: context.reem.text, fontSize: 19, fontWeight: FontWeight.w800)),
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+              child: Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(gradient: ReemColors.gradient, borderRadius: BorderRadius.circular(12)),
+                    child: const Icon(Icons.edit_square, color: Colors.white, size: 19),
+                  ),
+                  const SizedBox(width: 12),
+                  Text('Nouveau message', style: TextStyle(color: context.reem.text, fontSize: 19, fontWeight: FontWeight.w800)),
+                ],
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: TextField(
                 controller: _controller,
                 autofocus: true,
@@ -823,6 +1080,9 @@ class _NewMessageSheetState extends State<_NewMessageSheet> {
                 decoration: InputDecoration(
                   hintText: 'Rechercher un nom ou @utilisateur',
                   prefixIcon: Icon(Icons.search_rounded, color: context.reem.textMuted),
+                  fillColor: context.reem.surfaceHigh,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
                 ),
               ),
             ),
@@ -831,27 +1091,44 @@ class _NewMessageSheetState extends State<_NewMessageSheet> {
                   ? const Center(child: CircularProgressIndicator())
                   : _results.isEmpty
                       ? Center(
-                          child: Text(
-                            _lastTerm.length >= 2 ? 'Personne trouvé(e)' : 'Tape au moins 2 lettres',
-                            style: TextStyle(color: context.reem.textMuted),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.person_search_rounded, size: 46, color: context.reem.border),
+                              const SizedBox(height: 10),
+                              Text(
+                                _lastTerm.length >= 2 ? 'Personne trouvé(e)' : 'Tape au moins 2 lettres',
+                                style: TextStyle(color: context.reem.textMuted),
+                              ),
+                            ],
                           ),
                         )
                       : ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
                           itemCount: _results.length,
                           itemBuilder: (context, index) {
                             final user = Map<String, dynamic>.from(_results[index] as Map);
                             final username = user['username']?.toString();
-                            return ListTile(
-                              leading: _Avatar(
-                                url: user['profile_photo_path']?.toString(),
-                                name: user['name']?.toString() ?? '?',
-                                radius: 22,
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 3),
+                              child: Material(
+                                color: context.reem.surfaceHigh,
+                                borderRadius: BorderRadius.circular(18),
+                                child: ListTile(
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                                  leading: _Avatar(
+                                    url: user['profile_photo_path']?.toString(),
+                                    name: user['name']?.toString() ?? '?',
+                                    radius: 22,
+                                  ),
+                                  title: Text('${user['name']}', style: TextStyle(color: context.reem.text, fontWeight: FontWeight.w700)),
+                                  subtitle: username != null && username.isNotEmpty
+                                      ? Text('@$username', style: TextStyle(color: context.reem.textMuted))
+                                      : null,
+                                  trailing: Icon(Icons.send_rounded, color: ReemColors.primary.withValues(alpha: 0.9), size: 20),
+                                  onTap: () => widget.onUserChosen(user),
+                                ),
                               ),
-                              title: Text('${user['name']}', style: TextStyle(color: context.reem.text, fontWeight: FontWeight.w600)),
-                              subtitle: username != null && username.isNotEmpty
-                                  ? Text('@$username', style: TextStyle(color: context.reem.textMuted))
-                                  : null,
-                              onTap: () => widget.onUserChosen(user),
                             );
                           },
                         ),

@@ -13,6 +13,8 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../services/auth_service.dart';
 import '../services/session_manager.dart';
+import '../services/story_service.dart';
+import '../utils/media_url.dart';
 import '../services/video_edit_service.dart';
 import '../widgets/publish_form.dart';
 
@@ -694,9 +696,12 @@ class _PublishScreenState extends State<PublishScreen> {
   }
 
   Widget _buildBody(BuildContext context) {
+    // Sur téléphone, l'écran d'édition est plein écran, façon TikTok (sans barre de titre)
+    final mobileEditor = MediaQuery.sizeOf(context).width < 760 && !_isFinalPreview && !_isSending;
+
     return Scaffold(
       backgroundColor: const Color(0xFF06030F),
-      appBar: AppBar(
+      appBar: mobileEditor ? null : AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         title: Text(
@@ -750,7 +755,7 @@ class _PublishScreenState extends State<PublishScreen> {
                   valueColor:
                       const AlwaysStoppedAnimation<
                           Color>(
-                    Colors.redAccent,
+                    ReemColors.primary,
                   ),
                 ),
               ),
@@ -779,7 +784,7 @@ class _PublishScreenState extends State<PublishScreen> {
             child: const Text(
               'Annuler',
               style: TextStyle(
-                color: Colors.redAccent,
+                color: ReemColors.primary,
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
               ),
@@ -791,6 +796,8 @@ class _PublishScreenState extends State<PublishScreen> {
   }
 
   Widget _buildEditor() {
+    if (MediaQuery.sizeOf(context).width < 760) return _buildMobileEditor();
+
     return Column(
       children: [
         Expanded(
@@ -798,13 +805,517 @@ class _PublishScreenState extends State<PublishScreen> {
               ? const Center(
                   child:
                       CircularProgressIndicator(
-                    color: Colors.redAccent,
+                    color: ReemColors.primary,
                   ),
                 )
               : _buildVideoPreview(),
         ),
         _buildBottomEditor(),
       ],
+    );
+  }
+
+
+  // ---------------------------------------------------------------------------
+  // ÉDITEUR TÉLÉPHONE (façon TikTok) : aperçu plein écran, outils à droite,
+  // « Ta story » et « Suivant » en bas.
+  // ---------------------------------------------------------------------------
+
+  bool get _canGo => !_isSaving && !_isSending && _fileErrorMessage == null && !_isTrimmerLoading;
+
+  Widget _roundTopButton(IconData icon, VoidCallback onTap, {bool active = false}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 42,
+        height: 42,
+        decoration: BoxDecoration(
+          color: active ? ReemColors.primary.withValues(alpha: 0.85) : Colors.black45,
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, color: Colors.white, size: 22),
+      ),
+    );
+  }
+
+  Widget _sideTool(IconData icon, String label, VoidCallback onTap, {bool active = false}) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w700,
+                shadows: reemTextShadow,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: active ? ReemColors.primary : Colors.black38,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white24),
+              ),
+              child: Icon(icon, color: Colors.white, size: 21),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMobileEditor() {
+    final user = _sessionManager.currentUser;
+    final photo = absoluteMediaUrl(user?['profile_photo_path']?.toString());
+    final musicLabel = _musicPath == null ? 'Ajouter un son' : _getFileName(_musicPath!);
+
+    return Container(
+      color: const Color(0xFF06030F),
+      child: SafeArea(
+        child: Stack(
+          children: [
+            // Aperçu dans un cadre arrondi
+            Positioned.fill(
+              top: 62,
+              bottom: 86,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(22),
+                  child: _isTrimmerLoading
+                      ? const Center(child: CircularProgressIndicator(color: ReemColors.primary))
+                      : _buildVideoPreview(),
+                ),
+              ),
+            ),
+
+            // Barre du haut
+            Positioned(
+              left: 12,
+              right: 12,
+              top: 8,
+              child: Row(
+                children: [
+                  _roundTopButton(Icons.arrow_back_ios_new_rounded, () => Navigator.of(context).pop()),
+                  Expanded(
+                    child: Center(
+                      child: GestureDetector(
+                        onTap: _pickMusic,
+                        child: Container(
+                          constraints: const BoxConstraints(maxWidth: 220),
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            borderRadius: BorderRadius.circular(22),
+                            border: Border.all(color: Colors.white12),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.music_note_rounded, color: ReemColors.accent, size: 18),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  musicLabel,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14.5),
+                                ),
+                              ),
+                              if (_musicPath != null) ...[
+                                const SizedBox(width: 6),
+                                GestureDetector(
+                                  onTap: () => setState(() {
+                                    _musicPath = null;
+                                    _preparedVideoPath = null;
+                                  }),
+                                  child: const Icon(Icons.close_rounded, color: Colors.white70, size: 17),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  _roundTopButton(
+                    _isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                    () => setState(() {
+                      _isMuted = !_isMuted;
+                      _preparedVideoPath = null;
+                    }),
+                    active: _isMuted,
+                  ),
+                ],
+              ),
+            ),
+
+            // Outils à droite
+            Positioned(
+              right: 14,
+              top: 78,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  _sideTool(Icons.content_cut_rounded, 'Modifier', _showTrimSheet),
+                  _sideTool(Icons.crop_rotate_rounded, 'Recadrer', _showCropSheet, active: _cropFill),
+                  _sideTool(Icons.auto_awesome_rounded, 'Filtres', _showFiltersSheet, active: _selectedFilterIndex != 0),
+                  _sideTool(Icons.library_music_rounded, 'Musique', _pickMusic, active: _musicPath != null),
+                  _sideTool(
+                    _isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                    _isMuted ? 'Son coupé' : 'Son',
+                    () => setState(() {
+                      _isMuted = !_isMuted;
+                      _preparedVideoPath = null;
+                    }),
+                    active: _isMuted,
+                  ),
+                ],
+              ),
+            ),
+
+            // Barre du bas : Ta story + Suivant
+            Positioned(
+              left: 14,
+              right: 14,
+              bottom: 12,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: _canGo ? _postAsStory : null,
+                      child: Container(
+                        height: 54,
+                        decoration: BoxDecoration(
+                          color: ReemColors.surfaceHigh,
+                          borderRadius: BorderRadius.circular(28),
+                          border: Border.all(color: Colors.white24),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(2),
+                              decoration: const BoxDecoration(gradient: ReemColors.gradient, shape: BoxShape.circle),
+                              child: CircleAvatar(
+                                radius: 14,
+                                backgroundColor: ReemColors.surface,
+                                backgroundImage: photo != null ? NetworkImage(photo) : null,
+                                child: photo == null
+                                    ? const Icon(Icons.person_rounded, color: Colors.white70, size: 16)
+                                    : null,
+                              ),
+                            ),
+                            const SizedBox(width: 9),
+                            const Text(
+                              'Ta story',
+                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15.5),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: _canGo ? _prepareFinalPreview : null,
+                      child: Container(
+                        height: 54,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          gradient: _canGo ? ReemColors.gradient : null,
+                          color: _canGo ? null : ReemColors.surfaceHigh,
+                          borderRadius: BorderRadius.circular(28),
+                          boxShadow: _canGo
+                              ? [BoxShadow(color: ReemColors.primary.withValues(alpha: 0.4), blurRadius: 16, offset: const Offset(0, 4))]
+                              : null,
+                        ),
+                        child: _isSaving
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white),
+                              )
+                            : const Text(
+                                'Suivant',
+                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 16),
+                              ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Publie directement en story (30 s maximum).
+  Future<void> _postAsStory() async {
+    if (!_canGo) return;
+    if ((_endValue - _startValue) > 30000) {
+      _showErrorSnackBar('Une story dure 30 s maximum : raccourcis la vidéo avec « Modifier ».');
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    try {
+      await _player.pause();
+      final outputPath = await _videoEditService.renderVideo(
+        inputPath: _currentVideoPath,
+        startMilliseconds: _startValue,
+        endMilliseconds: _endValue,
+        muteOriginal: _isMuted,
+        filterName: _filters[_selectedFilterIndex]['name'] as String,
+        musicPath: _musicPath,
+        cropFill: _cropFill,
+        zoom: _cropZoom,
+        panX: _cropPanX,
+        panY: _cropPanY,
+      );
+      final error = await StoryService().create(path: outputPath);
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      if (error == null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Story publiée !')));
+        Navigator.of(context).pop(true);
+      } else {
+        _showErrorSnackBar(error);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      _showErrorSnackBar('Impossible de publier la story : $e');
+    }
+  }
+
+  Future<void> _showToolSheet({required String title, required Widget Function(StateSetter) builder}) {
+    return showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheet) => SafeArea(
+          child: Container(
+            margin: const EdgeInsets.all(10),
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+            decoration: BoxDecoration(
+              color: ReemColors.surface,
+              borderRadius: BorderRadius.circular(26),
+              border: Border.all(color: ReemColors.border),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(title, style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
+                    ),
+                    GestureDetector(
+                      onTap: () => Navigator.pop(sheetContext),
+                      child: const Icon(Icons.check_circle_rounded, color: ReemColors.primary, size: 28),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                builder(setSheet),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showTrimSheet() {
+    return _showToolSheet(
+      title: 'Modifier la durée',
+      builder: (setSheet) {
+        void both(VoidCallback fn) {
+          setState(fn);
+          setSheet(() {});
+        }
+
+        if (_videoDuration <= Duration.zero) {
+          return const Text('Durée indisponible.', style: TextStyle(color: Colors.white70));
+        }
+        return Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(_formatDuration(_startValue.round()), style: const TextStyle(color: Colors.white70)),
+                Text(
+                  'Sélection : ${_formatDuration((_endValue - _startValue).round())}',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12.5),
+                ),
+                Text(_formatDuration(_endValue.round()), style: const TextStyle(color: Colors.white70)),
+              ],
+            ),
+            RangeSlider(
+              min: 0,
+              max: _videoDuration.inMilliseconds.toDouble(),
+              divisions: _videoDuration.inMilliseconds > 1000 ? _videoDuration.inMilliseconds ~/ 500 : null,
+              values: RangeValues(_startValue, _endValue),
+              activeColor: ReemColors.primary,
+              onChanged: (values) => both(() {
+                _startValue = values.start;
+                _endValue = values.end;
+                _preparedVideoPath = null;
+              }),
+              onChangeEnd: (values) => _player.seek(Duration(milliseconds: values.start.round())),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showCropSheet() {
+    return _showToolSheet(
+      title: 'Recadrer',
+      builder: (setSheet) {
+        void both(VoidCallback fn) {
+          setState(fn);
+          setSheet(() {});
+        }
+
+        Widget mode(String label, IconData icon, bool selected, VoidCallback onTap) {
+          return Expanded(
+            child: GestureDetector(
+              onTap: onTap,
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                decoration: BoxDecoration(
+                  gradient: selected ? ReemColors.gradient : null,
+                  color: selected ? null : ReemColors.surfaceHigh,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(icon, color: Colors.white, size: 19),
+                    const SizedBox(width: 7),
+                    Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                mode('Ajuster', Icons.fit_screen_rounded, !_cropFill, () => both(() {
+                      _cropFill = false;
+                      _preparedVideoPath = null;
+                    })),
+                const SizedBox(width: 10),
+                mode('Remplir', Icons.crop_free_rounded, _cropFill, () => both(() {
+                      _cropFill = true;
+                      _preparedVideoPath = null;
+                    })),
+              ],
+            ),
+            if (_cropFill) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  const Icon(Icons.zoom_in_rounded, color: Colors.white70),
+                  Expanded(
+                    child: Slider(
+                      min: 1,
+                      max: 4,
+                      value: _cropZoom,
+                      activeColor: ReemColors.primary,
+                      onChanged: (value) => both(() {
+                        _cropZoom = value;
+                        _preparedVideoPath = null;
+                      }),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Recentrer',
+                    icon: const Icon(Icons.restart_alt_rounded, color: Colors.white70),
+                    onPressed: () => both(() {
+                      _cropZoom = 1.0;
+                      _cropPanX = 0.0;
+                      _cropPanY = 0.0;
+                      _preparedVideoPath = null;
+                    }),
+                  ),
+                ],
+              ),
+              const Text(
+                'Glisse sur la vidéo pour la déplacer, pince pour zoomer.',
+                style: TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showFiltersSheet() {
+    return _showToolSheet(
+      title: 'Filtres',
+      builder: (setSheet) => SizedBox(
+        height: 74,
+        child: ListView.builder(
+          scrollDirection: Axis.horizontal,
+          itemCount: _filters.length,
+          itemBuilder: (context, index) {
+            final selected = _selectedFilterIndex == index;
+            return GestureDetector(
+              onTap: () {
+                setState(() {
+                  _selectedFilterIndex = index;
+                  _preparedVideoPath = null;
+                });
+                setSheet(() {});
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                width: 72,
+                margin: const EdgeInsets.only(right: 10),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  gradient: selected ? ReemColors.gradient : null,
+                  color: selected ? null : ReemColors.surfaceHigh,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(
+                  '${_filters[index]['name']}',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
     );
   }
 
@@ -882,7 +1393,7 @@ class _PublishScreenState extends State<PublishScreen> {
             _fileErrorMessage!,
             textAlign: TextAlign.center,
             style: const TextStyle(
-              color: Colors.redAccent,
+              color: ReemColors.primary,
               fontSize: 15,
             ),
           ),
@@ -1179,7 +1690,7 @@ class _PublishScreenState extends State<PublishScreen> {
                                   index
                               ? Border.all(
                                   color:
-                                      Colors.redAccent,
+                                      ReemColors.primary,
                                   width: 2,
                                 )
                               : null,
@@ -1212,7 +1723,7 @@ class _PublishScreenState extends State<PublishScreen> {
               ChoiceChip(
                 label: const Text('Ajuster'),
                 selected: !_cropFill,
-                selectedColor: Colors.redAccent,
+                selectedColor: ReemColors.primary,
                 backgroundColor: Colors.black38,
                 labelStyle: const TextStyle(color: Colors.white),
                 onSelected: (_) => setState(() {
@@ -1224,7 +1735,7 @@ class _PublishScreenState extends State<PublishScreen> {
               ChoiceChip(
                 label: const Text('Remplir'),
                 selected: _cropFill,
-                selectedColor: Colors.redAccent,
+                selectedColor: ReemColors.primary,
                 backgroundColor: Colors.black38,
                 labelStyle: const TextStyle(color: Colors.white),
                 onSelected: (_) => setState(() {
@@ -1238,7 +1749,7 @@ class _PublishScreenState extends State<PublishScreen> {
                     min: 1,
                     max: 4,
                     value: _cropZoom,
-                    activeColor: Colors.redAccent,
+                    activeColor: ReemColors.primary,
                     onChanged: (value) => setState(() {
                       _cropZoom = value;
                       _preparedVideoPath = null;
@@ -1284,7 +1795,7 @@ class _PublishScreenState extends State<PublishScreen> {
               max: _videoDuration.inMilliseconds.toDouble(),
               divisions: _videoDuration.inMilliseconds > 1000 ? _videoDuration.inMilliseconds ~/ 500 : null,
               values: RangeValues(_startValue, _endValue),
-              activeColor: Colors.redAccent,
+              activeColor: ReemColors.primary,
               onChanged: (values) {
                 setState(() {
                   _startValue = values.start;
